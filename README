@@ -24,4 +24,5 @@ user    41m58.185s
 sys     0m0.044s
 
 In 5 minutes of real time (on an FX-8120 CPU), it found the original
-seed and another seed that also produces the same mt_rand() output.
+seed, another seed that also produces the same mt_rand() output, and it
+searched the rest of the 32-bit seed space (not finding other matches).
