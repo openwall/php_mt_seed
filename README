@@ -1,0 +1,27 @@
+This is a PHP mt_rand() seed cracker.  It finds possible seeds given the
+very first mt_rand() output after being seeded with mt_srand().
+
+Here's a sample run.  First, generate a sample "random" number (using
+PHP 5.3.x in this case):
+
+$ php5 -r 'mt_srand(1234567890); echo mt_rand(), "\n";'
+1328851649
+
+Now build and run the cracker:
+
+$ make
+gcc -Wall -O2 -fomit-frame-pointer -fopenmp php_mt_seed.c -o php_mt_seed
+$ time ./php_mt_seed 1328851649
+Found 0, trying 654311424 - 671088639, speed 13631488 seeds per second
+seed = 658126103
+Found 1, trying 1224736768 - 1241513983, speed 13585543 seeds per second
+seed = 1234567890
+Found 2, trying 4278190080 - 4294967295, speed 13617003 seeds per second
+Found 2
+
+real    5m15.397s
+user    41m58.185s
+sys     0m0.044s
+
+In 5 minutes of real time (on an FX-8120 CPU), it found the original
+seed and another seed that also produces the same mt_rand() output.
