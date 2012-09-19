@@ -60,6 +60,8 @@ static void print_guess(uint32_t seed, unsigned int *found)
 	if ((x) == value) \
 		print_guess((y), &found);
 
+#define P 4
+
 static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 {
 	unsigned int found = 0;
@@ -71,9 +73,11 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 	uint32_t seed_and_0x80000000, seed_shr_30;
 #endif
 
-	assert((min >> (30 - 3)) == ((max - 1) >> (30 - 3)));
+	assert((min >> (30 - P)) == ((max - 1) >> (30 - P)));
 
 #ifdef __SSE4_1__
+	assert(P == 4);
+
 	vvalue = _mm_set1_epi32(value);
 
 	{
@@ -84,7 +88,7 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 #endif
 
 	{
-		uint32_t seed = (uint32_t)min << 3;
+		uint32_t seed = (uint32_t)min << P;
 #ifdef __SSE4_1__
 		__m128i vseed = _mm_set1_epi32(seed);
 		const __m128i c0x80000000 = _mm_set1_epi32(0x80000000);
@@ -104,67 +108,93 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 #endif
 #endif
 	for (base = min; base < max; base++) {
-		uint32_t seed = (uint32_t)base << 3;
+		uint32_t seed = (uint32_t)base << P;
 #ifdef __SSE4_1__
-		__m128i vseed = _mm_set1_epi32(seed);
-		const __m128i cadde = _mm_set_epi32(0, 2, 4, 6);
-		const __m128i caddo = _mm_set_epi32(1, 3, 5, 7);
 		const __m128i cmul = _mm_set1_epi32(1812433253U);
 		const __m128i c0x7fffffff = _mm_set1_epi32(0x7fffffff);
 		const __m128i c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
 		const __m128i c0xefc60000 = _mm_set1_epi32(0xefc60000);
 		const __m128i c0x9908b0df = _mm_set1_epi32(0x9908b0df);
-		__m128i s0e, s0o, s1e, s1o, se, so;
+		__m128i a, b, c, d, a1, b1, c1, d1;
 		unsigned int i;
 
-		s0e = _mm_add_epi32(vseed, cadde);
-		s0o = _mm_add_epi32(vseed, caddo);
-
-		s1e = se = _mm_macc_epi32(cmul, _mm_xor_si128(
-		    s0e, seed_shr_30), vi[0]);
-		s1o = so = _mm_macc_epi32(cmul, _mm_xor_si128(
-		    s0o, seed_shr_30), vi[0]);
-
-		for (i = 1; i < M; i += 2) {
-			se = _mm_macc_epi32(cmul, _mm_xor_si128(
-			    se, _mm_srli_epi32(se, 30)), vi[i]);
-			so = _mm_macc_epi32(cmul, _mm_xor_si128(
-			    so, _mm_srli_epi32(so, 30)), vi[i]);
-			se = _mm_macc_epi32(cmul, _mm_xor_si128(
-			    se, _mm_srli_epi32(se, 30)), vi[i + 1]);
-			so = _mm_macc_epi32(cmul, _mm_xor_si128(
-			    so, _mm_srli_epi32(so, 30)), vi[i + 1]);
+		{
+			__m128i vseed = _mm_set1_epi32(seed);
+			a = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
+			b = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
+			c = _mm_add_epi32(vseed, _mm_set_epi32(8, 10, 12, 14));
+			d = _mm_add_epi32(vseed, _mm_set_epi32(9, 11, 13, 15));
 		}
 
-		se = _mm_xor_si128(se,
-		    _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000,
-		    _mm_and_si128(s1e, c0x7fffffff)), 1));
-		so = _mm_xor_si128(so,
-		    _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000,
-		    _mm_and_si128(s1o, c0x7fffffff)), 1));
+		{
+			__m128i vi0 = vi[0];
+#define DO(x, x1) \
+	x = x1 = _mm_macc_epi32(cmul, _mm_xor_si128(x, seed_shr_30), vi0);
+			DO(a, a1)
+			DO(b, b1)
+			DO(c, c1)
+			DO(d, d1)
+#undef DO
+		}
 
-		so = _mm_xor_si128(so, c0x9908b0df);
+		for (i = 1; i < M; i++) {
+			__m128i vii = vi[i];
+#define DO(x) \
+	x = _mm_macc_epi32(cmul, _mm_xor_si128(x, _mm_srli_epi32(x, 30)), vii);
+			DO(a)
+			DO(b)
+			DO(c)
+			DO(d)
+#undef DO
+		}
 
-		se = _mm_xor_si128(se, _mm_srli_epi32(se, 11));
-		so = _mm_xor_si128(so, _mm_srli_epi32(so, 11));
-		se = _mm_xor_si128(se, _mm_and_si128(_mm_slli_epi32(se, 7),
-		    c0x9d2c5680));
-		so = _mm_xor_si128(so, _mm_and_si128(_mm_slli_epi32(so, 7),
-		    c0x9d2c5680));
-		se = _mm_xor_si128(se, _mm_and_si128(_mm_slli_epi32(se, 15),
-		    c0xefc60000));
-		so = _mm_xor_si128(so, _mm_and_si128(_mm_slli_epi32(so, 15),
-		    c0xefc60000));
-		se = _mm_xor_si128(se, _mm_srli_epi32(se, 18));
-		so = _mm_xor_si128(so, _mm_srli_epi32(so, 18));
-		se = _mm_srli_epi32(se, 1);
-		so = _mm_srli_epi32(so, 1);
+#define DO(x, x1) \
+	x = _mm_xor_si128(x, _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000, \
+	    _mm_and_si128(x1, c0x7fffffff)), 1));
+		DO(a, a1)
+		DO(b, b1)
+		DO(c, c1)
+		DO(d, d1)
+#undef DO
+
+		b = _mm_xor_si128(b, c0x9908b0df);
+		d = _mm_xor_si128(d, c0x9908b0df);
+
+#define DO(x) \
+	x = _mm_xor_si128(x, _mm_srli_epi32(x, 11));
+		DO(a)
+		DO(b)
+		DO(c)
+		DO(d)
+#undef DO
+#define DO(x, s, c) \
+	x = _mm_xor_si128(x, _mm_and_si128(_mm_slli_epi32(x, s), c));
+		DO(a, 7, c0x9d2c5680)
+		DO(b, 7, c0x9d2c5680)
+		DO(c, 7, c0x9d2c5680)
+		DO(d, 7, c0x9d2c5680)
+		DO(a, 15, c0xefc60000)
+		DO(b, 15, c0xefc60000)
+		DO(c, 15, c0xefc60000)
+		DO(d, 15, c0xefc60000)
+#undef DO
+#define DO(x) \
+	x = _mm_srli_epi32(_mm_xor_si128(x, _mm_srli_epi32(x, 18)), 1);
+		DO(a)
+		DO(b)
+		DO(c)
+		DO(d)
+#undef DO
 
 		{
-			__m128i semask = _mm_cmpeq_epi32(se, vvalue);
-			__m128i somask = _mm_cmpeq_epi32(so, vvalue);
-			if (_mm_testz_si128(semask, semask) &&
-			    _mm_testz_si128(somask, somask))
+			__m128i amask = _mm_cmpeq_epi32(a, vvalue);
+			__m128i bmask = _mm_cmpeq_epi32(b, vvalue);
+			__m128i cmask = _mm_cmpeq_epi32(c, vvalue);
+			__m128i dmask = _mm_cmpeq_epi32(d, vvalue);
+			if (_mm_testz_si128(amask, amask) &&
+			    _mm_testz_si128(bmask, bmask) &&
+			    _mm_testz_si128(cmask, cmask) &&
+			    _mm_testz_si128(dmask, dmask))
 				continue;
 		}
 
@@ -172,9 +202,11 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 			union {
 				__m128i v;
 				uint32_t s[4];
-			} u[2];
-			u[0].v = se;
-			u[1].v = so;
+			} u[4];
+			u[0].v = a;
+			u[1].v = b;
+			u[2].v = c;
+			u[3].v = d;
 			COMPARE(u[0].s[0], seed + 6)
 			COMPARE(u[0].s[1], seed + 4)
 			COMPARE(u[0].s[2], seed + 2)
@@ -183,38 +215,81 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 			COMPARE(u[1].s[1], seed + 5)
 			COMPARE(u[1].s[2], seed + 3)
 			COMPARE(u[1].s[3], seed + 1)
+			COMPARE(u[2].s[0], seed + 14)
+			COMPARE(u[2].s[1], seed + 12)
+			COMPARE(u[2].s[2], seed + 10)
+			COMPARE(u[2].s[3], seed + 8)
+			COMPARE(u[3].s[0], seed + 15)
+			COMPARE(u[3].s[1], seed + 13)
+			COMPARE(u[3].s[2], seed + 11)
+			COMPARE(u[3].s[3], seed + 9)
 		}
 #else
 		do {
-			uint32_t s1e, s1o, se, so;
+			uint32_t a, b, c, d, a1, b1, c1, d1;
 			unsigned int i;
 
-			s1e = se = 1812433253U * (seed ^ seed_shr_30) + 1;
-			s1o = so = 1812433253U * ((seed + 1) ^ seed_shr_30) + 1;
+#define DO(x, x1, seed) \
+	x = x1 = 1812433253U * ((seed) ^ seed_shr_30) + 1;
+			DO(a, a1, seed)
+			DO(b, b1, seed + 1)
+			DO(c, c1, seed + 2)
+			DO(d, d1, seed + 3)
+#undef DO
 			for (i = 2; i <= M; i++) {
-				se = 1812433253U * (se ^ (se >> 30)) + i;
-				so = 1812433253U * (so ^ (so >> 30)) + i;
+#define DO(x) \
+	x = 1812433253U * (x ^ (x >> 30)) + i;
+				DO(a)
+				DO(b)
+				DO(c)
+				DO(d)
+#undef DO
 			}
 
-			se ^= (seed_and_0x80000000 | (s1e & 0x7fffffffU)) >> 1;
-			so ^= (seed_and_0x80000000 | (s1o & 0x7fffffffU)) >> 1;
+#define DO(x, x1) \
+	x ^= (seed_and_0x80000000 | (x1 & 0x7fffffffU)) >> 1;
+			DO(a, a1)
+			DO(b, b1)
+			DO(c, c1)
+			DO(d, d1)
+#undef DO
 
-			so ^= 0x9908b0dfU;
+			b ^= 0x9908b0dfU;
+			d ^= 0x9908b0dfU;
 
-			se ^= se >> 11;
-			so ^= so >> 11;
-			se ^= (se << 7) & 0xe9d2c5680U;
-			so ^= (so << 7) & 0xe9d2c5680U;
-			se ^= (se << 15) & 0xeefc60000U;
-			so ^= (so << 15) & 0xeefc60000U;
-			se ^= se >> 18;
-			so ^= so >> 18;
+#define DO(x) \
+	x ^= x >> 11;
+			DO(a)
+			DO(b)
+			DO(c)
+			DO(d)
+#undef DO
+#define DO(x, s, c) \
+	x ^= (x << s) & c;
+			DO(a, 7, 0x9d2c5680)
+			DO(b, 7, 0x9d2c5680)
+			DO(c, 7, 0x9d2c5680)
+			DO(d, 7, 0x9d2c5680)
+			DO(a, 15, 0xefc60000)
+			DO(b, 15, 0xefc60000)
+			DO(c, 15, 0xefc60000)
+			DO(d, 15, 0xefc60000)
+#undef DO
+#define DO(x) \
+	x = (x ^ (x >> 18)) >> 1;
+			DO(a)
+			DO(b)
+			DO(c)
+			DO(d)
+#undef DO
 
-			COMPARE(se >> 1, seed)
-			COMPARE(so >> 1, seed + 1)
+			COMPARE(a, seed)
+			COMPARE(b, seed + 1)
+			COMPARE(c, seed + 2)
+			COMPARE(d, seed + 3)
 
-			seed += 2;
-		} while (seed & 7);
+			seed += 4;
+		} while (seed & ((1 << P) - 1));
 #endif
 	}
 
@@ -225,7 +300,7 @@ static unsigned int crack(uint32_t value)
 {
 	unsigned int found = 0;
 	uint32_t base;
-	const uint32_t step = 0x400000;
+	const uint32_t step = 0x200000;
 	long clk_tck;
 	clock_t start_time;
 	struct tms tms;
@@ -233,8 +308,8 @@ static unsigned int crack(uint32_t value)
 	clk_tck = sysconf(_SC_CLK_TCK);
 	start_time = times(&tms);
 
-	for (base = 0; base < 0x20000000; base += step) {
-		uint32_t start = base << 3, next = (base + step) << 3;
+	for (base = 0; base < (0x40000000 >> (P - 2)); base += step) {
+		uint32_t start = base << P, next = (base + step) << P;
 		clock_t running_time = times(&tms) - start_time;
 		fprintf(stderr,
 		    "\rFound %u, trying %u - %u, speed %llu seeds per second ",
@@ -252,6 +327,8 @@ static unsigned int crack(uint32_t value)
 
 	return found;
 }
+
+#undef P
 
 static uint32_t parse(int argc, char **argv)
 {

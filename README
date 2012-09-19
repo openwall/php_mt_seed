@@ -12,18 +12,18 @@ Now build and run the cracker:
 $ make
 gcc -Wall -march=native -O2 -fomit-frame-pointer -funroll-loops -fopenmp php_mt_seed.c -o php_mt_seed
 $ time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 45898791 seeds per second
+Found 0, trying 637534208 - 671088639, speed 63310249 seeds per second
 seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 45860271 seeds per second
+Found 1, trying 1207959552 - 1241513983, speed 63343447 seeds per second
 seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 45875905 seeds per second
+Found 2, trying 4261412864 - 4294967295, speed 63347894 seeds per second
 Found 2
 
-real    1m33.619s
-user    12m28.007s
-sys     0m0.000s
+real    1m7.798s
+user    9m1.942s
+sys     0m0.008s
 
-In 1.5 minutes of real time (on an FX-8120 CPU, using vectorized fused
+In one minute of real time (on an FX-8120 CPU, using vectorized fused
 multiply-add instructions), it found the original seed, another seed
 that also produces the same mt_rand() output, and it searched the rest
 of the 32-bit seed space (not finding other matches).
