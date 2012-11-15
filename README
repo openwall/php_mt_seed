@@ -12,15 +12,15 @@ Now build and run the cracker:
 $ make
 gcc -Wall -march=native -O2 -fomit-frame-pointer -funroll-loops -fopenmp php_mt_seed.c -o php_mt_seed
 $ time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 63310249 seeds per second
+Found 0, trying 637534208 - 671088639, speed 64138250 seeds per second
 seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 63343447 seeds per second
+Found 1, trying 1207959552 - 1241513983, speed 64184885 seeds per second
 seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 63347894 seeds per second
+Found 2, trying 4261412864 - 4294967295, speed 64197241 seeds per second
 Found 2
 
-real    1m7.798s
-user    9m1.942s
+real    1m6.904s
+user    8m54.697s
 sys     0m0.008s
 
 In one minute of real time (on an FX-8120 CPU, using vectorized fused
