@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012 Solar Designer <solar at openwall.com>
+ * Copyright (c) 2012,2013 Solar Designer <solar at openwall.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted.
@@ -45,24 +45,47 @@
 
 #define M 397
 
+typedef struct {
+	int is_pure;
+	int32_t mmin, mmax;
+	int32_t rmin;
+	double rspan;
+} match_t;
+
 static void print_guess(uint32_t seed, unsigned int *found)
 {
 #ifdef _OPENMP
 #pragma omp critical
 #endif
 	{
-		printf("\nseed = %u\n", seed);
+		printf("%sseed = %u\n", *found ? "" : "\n", seed);
 		(*found)++;
 	}
 }
 
 #define COMPARE(x, y) \
-	if ((x) == value) \
-		print_guess((y), &found);
+	{ \
+		if (match->is_pure) { \
+			if ((x) == match->mmin) \
+				print_guess((y), &found); \
+		} else { \
+			int32_t z; \
+			if (match->rmin == 0 && \
+			    match->rspan == 0x7fffffff + 1.0) \
+				z = (x); \
+			else \
+				z = match->rmin + \
+				    (int32_t)(match->rspan * (x) / \
+				    (0x7fffffff + 1.0)); \
+			if (z >= match->mmin && z <= match->mmax) \
+				print_guess((y), &found); \
+		} \
+	}
 
 #define P 5
 
-static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
+static unsigned int crack_range(int32_t start, int32_t end,
+    const match_t *match)
 {
 	unsigned int found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
@@ -73,12 +96,13 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 	uint32_t seed_and_0x80000000, seed_shr_30;
 #endif
 
-	assert((min >> (30 - P)) == ((max - 1) >> (30 - P)));
+	assert((start >> (30 - P)) == ((end - 1) >> (30 - P)));
 
 #ifdef __SSE4_1__
 	assert(P == 5);
 
-	vvalue = _mm_set1_epi32(value);
+	if (match->is_pure)
+		vvalue = _mm_set1_epi32(match->mmin);
 
 	{
 		unsigned int i;
@@ -88,7 +112,7 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 #endif
 
 	{
-		uint32_t seed = (uint32_t)min << P;
+		uint32_t seed = (uint32_t)start << P;
 #ifdef __SSE4_1__
 		__m128i vseed = _mm_set1_epi32(seed);
 		const __m128i c0x80000000 = _mm_set1_epi32(0x80000000);
@@ -102,12 +126,12 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 
 #ifdef _OPENMP
 #ifdef __SSE4_1__
-#pragma omp parallel for default(none) private(base) shared(value, min, max, found, vi, seed_and_0x80000000, seed_shr_30, vvalue)
+#pragma omp parallel for default(none) private(base) shared(match, start, end, found, vi, seed_and_0x80000000, seed_shr_30, vvalue)
 #else
-#pragma omp parallel for default(none) private(base) shared(value, min, max, found, seed_and_0x80000000, seed_shr_30)
+#pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30)
 #endif
 #endif
-	for (base = min; base < max; base++) {
+	for (base = start; base < end; base++) {
 		uint32_t seed = (uint32_t)base << P;
 #ifdef __SSE4_1__
 		const __m128i cmul = _mm_set1_epi32(1812433253U);
@@ -224,7 +248,7 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 		DO(h)
 #undef DO
 
-		{
+		if (match->is_pure) {
 			__m128i amask = _mm_cmpeq_epi32(a, vvalue);
 			__m128i bmask = _mm_cmpeq_epi32(b, vvalue);
 			__m128i cmask = _mm_cmpeq_epi32(c, vvalue);
@@ -341,7 +365,7 @@ static unsigned int crack_range(int32_t min, int32_t max, uint32_t value)
 	return found;
 }
 
-static unsigned int crack(uint32_t value)
+static unsigned int crack(const match_t *match)
 {
 	unsigned int found = 0;
 	uint32_t base;
@@ -362,7 +386,7 @@ static unsigned int crack(uint32_t value)
 		    (unsigned long long)start * clk_tck /
 		    (running_time ? running_time : 1));
 
-		found += crack_range(base, base + step, value);
+		found += crack_range(base, base + step, match);
 
 #if 0
 		if (found)
@@ -375,36 +399,69 @@ static unsigned int crack(uint32_t value)
 
 #undef P
 
-static uint32_t parse(int argc, char **argv)
+static int32_t parse_int(const char *s)
+{
+	unsigned long ulvalue;
+	uint32_t uvalue;
+	char *error;
+
+	errno = 0;
+	uvalue = ulvalue = strtoul(s, &error, 10);
+	if (!errno && !*error &&
+	    *s >= '0' && *s <= '9' &&
+	    uvalue == ulvalue && uvalue <= 0x7fffffffU)
+		return uvalue;
+
+	return -1;
+}
+
+static void parse(int argc, char **argv, match_t *match)
 {
 	int ok = 0;
-	uint32_t value;
 
-	if (argc == 2) {
-		unsigned long ulvalue;
-		char *error;
+	if (argc == 2 || argc == 3 || argc == 5) {
+		int32_t value = parse_int(argv[1]);
+		ok = value >= 0;
 
-		errno = 0;
-		value = ulvalue = strtoul(argv[1], &error, 10);
-		ok = !errno && !*error &&
-		    argv[1][0] >= '0' && argv[1][0] <= '9' &&
-		    value == ulvalue && value <= 0x7fffffffU;
+		match->is_pure = 1;
+		match->mmin = match->mmax = value;
+		match->rmin = 0; match->rspan = 0x7fffffff + 1.0;
+
+		if (argc > 2) {
+			value = parse_int(argv[2]);
+			ok &= value >= match->mmin;
+			match->is_pure = value == match->mmin;
+			match->mmax = value;
+		}
+
+		if (argc > 4) {
+			value = parse_int(argv[3]);
+			ok &= value >= 0 && value <= match->mmax;
+			match->is_pure &= value == 0;
+			match->rmin = value;
+
+			value = parse_int(argv[4]);
+			ok &= value >= match->rmin && value >= match->mmin;
+			match->is_pure &= value == 0x7fffffff;
+			match->rspan = (double)value - match->rmin + 1.0;
+		}
 	}
 
 	if (!ok) {
-		printf("Usage: %s MT_RAND_VALUE\n",
+		printf("Usage: %s VALUE_OR_MATCH_MIN"
+		    " [MATCH_MAX [RANGE_MIN RANGE_MAX]]\n",
 		    argv[0] ? argv[0] : "php_mt_seed");
 		exit(1);
 	}
-
-	return value;
 }
 
 int main(int argc, char **argv)
 {
-	unsigned int found = crack(parse(argc, argv));
+	match_t match;
 
-	printf("\nFound %u\n", found);
+	parse(argc, argv, &match);
+
+	printf("\nFound %u\n", crack(&match));
 
 	return 0;
 }
