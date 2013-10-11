@@ -15,9 +15,25 @@
 #include <sys/times.h>
 #include <assert.h>
 
-#ifdef __SSE4_1__
+#ifdef __MIC__
+#include <immintrin.h>
+
+typedef __m512i vtype;
+
+/* hack */
+#define _mm_set1_epi32(x) _mm512_set1_epi32(x)
+#define _mm_add_epi32(x, y) _mm512_add_epi32(x, y)
+#define _mm_macc_epi32(x, y, z) _mm512_fmadd_epi32(x, y, z)
+#define _mm_slli_epi32(x, i) _mm512_slli_epi32(x, i)
+#define _mm_srli_epi32(x, i) _mm512_srli_epi32(x, i)
+#define _mm_and_si128(x, y) _mm512_and_epi32(x, y)
+#define _mm_or_si128(x, y) _mm512_or_epi32(x, y)
+#define _mm_xor_si128(x, y) _mm512_xor_epi32(x, y)
+#elif defined(__SSE4_1__)
 #include <emmintrin.h>
 #include <smmintrin.h>
+
+typedef __m128i vtype;
 
 #ifdef __XOP__
 #include <x86intrin.h>
@@ -61,7 +77,7 @@ typedef struct {
 #define NEXT_STATE(x, i) \
 	(x) = 1812433253U * ((x) ^ ((x) >> 30)) + (i);
 
-#ifdef __SSE4_1__
+#if defined(__SSE4_1__) || defined(__MIC__)
 static inline int diff(uint32_t x, uint32_t xs, uint32_t seed,
     const match_t *match)
 #else
@@ -69,7 +85,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
     const match_t *match)
 #endif
 {
-#ifdef __SSE4_1__
+#if defined(__SSE4_1__) || defined(__MIC__)
 	uint32_t xsi = seed;
 #else
 	uint32_t xsi = x1;
@@ -95,7 +111,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 		if (match->flags & MATCH_LAST)
 			return 0;
 
-#ifdef __SSE4_1__
+#if defined(__SSE4_1__) || defined(__MIC__)
 		if (i == 1)
 			NEXT_STATE(xsi, 1)
 #endif
@@ -127,7 +143,7 @@ static void print_guess(uint32_t seed, unsigned int *found)
 	}
 }
 
-#ifdef __SSE4_1__
+#if defined(__SSE4_1__) || defined(__MIC__)
 #define COMPARE(x, xM, seed) \
 	if (!diff((x), (xM), (seed), match)) \
 		print_guess((seed), &found);
@@ -137,24 +153,32 @@ static void print_guess(uint32_t seed, unsigned int *found)
 		print_guess((seed), &found);
 #endif
 
+#ifdef __MIC__
+#define P 7
+#else
 #define P 5
+#endif
 
 static unsigned int crack_range(int32_t start, int32_t end,
     const match_t *match)
 {
 	unsigned int found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
-#ifdef __SSE4_1__
-	__m128i vvalue;
-	__m128i vi[M], seed_and_0x80000000, seed_shr_30;
+#if defined(__SSE4_1__) || defined(__MIC__)
+	vtype vvalue;
+	vtype vi[M], seed_and_0x80000000, seed_shr_30;
 #else
 	uint32_t seed_and_0x80000000, seed_shr_30;
 #endif
 
 	assert((start >> (30 - P)) == ((end - 1) >> (30 - P)));
 
-#ifdef __SSE4_1__
+#if defined(__SSE4_1__) || defined(__MIC__)
+#ifdef __MIC__
+	assert(P == 7);
+#else
 	assert(P == 5);
+#endif
 
 	if (match->flags & MATCH_PURE)
 		vvalue = _mm_set1_epi32(match->mmin);
@@ -168,9 +192,9 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 	{
 		uint32_t seed = (uint32_t)start << P;
-#ifdef __SSE4_1__
-		__m128i vseed = _mm_set1_epi32(seed);
-		const __m128i c0x80000000 = _mm_set1_epi32(0x80000000);
+#if defined(__SSE4_1__) || defined(__MIC__)
+		vtype vseed = _mm_set1_epi32(seed);
+		const vtype c0x80000000 = _mm_set1_epi32(0x80000000);
 		seed_and_0x80000000 = _mm_and_si128(vseed, c0x80000000);
 		seed_shr_30 = _mm_srli_epi32(vseed, 30);
 #else
@@ -180,7 +204,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	}
 
 #ifdef _OPENMP
-#ifdef __SSE4_1__
+#if defined(__SSE4_1__) || defined(__MIC__)
 #pragma omp parallel for default(none) private(base) shared(match, start, end, found, vi, seed_and_0x80000000, seed_shr_30, vvalue)
 #else
 #pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30)
@@ -188,18 +212,29 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #endif
 	for (base = start; base < end; base++) {
 		uint32_t seed = (uint32_t)base << P;
-#ifdef __SSE4_1__
-		const __m128i cmul = _mm_set1_epi32(1812433253U);
-		const __m128i c0x7fffffff = _mm_set1_epi32(0x7fffffff);
-		const __m128i c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
-		const __m128i c0xefc60000 = _mm_set1_epi32(0xefc60000);
-		const __m128i c0x9908b0df = _mm_set1_epi32(0x9908b0df);
-		__m128i vseed = _mm_set1_epi32(seed);
-		__m128i a, b, c, d, e, f, g, h;
-		__m128i a1, b1, c1, d1, e1, f1, g1, h1;
-		__m128i aM, bM, cM, dM, eM, fM, gM, hM;
+#if defined(__SSE4_1__) || defined(__MIC__)
+		const vtype cmul = _mm_set1_epi32(1812433253U);
+		const vtype c0x7fffffff = _mm_set1_epi32(0x7fffffff);
+		const vtype c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
+		const vtype c0xefc60000 = _mm_set1_epi32(0xefc60000);
+		const vtype c0x9908b0df = _mm_set1_epi32(0x9908b0df);
+		vtype vseed = _mm_set1_epi32(seed);
+		vtype a, b, c, d, e, f, g, h;
+		vtype a1, b1, c1, d1, e1, f1, g1, h1;
+		vtype aM, bM, cM, dM, eM, fM, gM, hM;
 		unsigned int i;
 
+#ifdef __MIC__
+		aM = _mm512_add_epi32(vseed, _mm512_set_epi32(
+		    0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30));
+		bM = _mm512_add_epi32(aM, _mm512_set1_epi32(1));
+		cM = _mm512_add_epi32(aM, _mm512_set1_epi32(32));
+		dM = _mm512_add_epi32(aM, _mm512_set1_epi32(33));
+		eM = _mm512_add_epi32(aM, _mm512_set1_epi32(64));
+		fM = _mm512_add_epi32(aM, _mm512_set1_epi32(65));
+		gM = _mm512_add_epi32(aM, _mm512_set1_epi32(96));
+		hM = _mm512_add_epi32(aM, _mm512_set1_epi32(97));
+#else
 		aM = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
 		bM = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
 		cM = _mm_add_epi32(vseed, _mm_set_epi32(8, 10, 12, 14));
@@ -208,9 +243,10 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		fM = _mm_add_epi32(vseed, _mm_set_epi32(17, 19, 21, 23));
 		gM = _mm_add_epi32(vseed, _mm_set_epi32(24, 26, 28, 30));
 		hM = _mm_add_epi32(vseed, _mm_set_epi32(25, 27, 29, 31));
+#endif
 
 		{
-			__m128i vi0 = vi[0];
+			vtype vi0 = vi[0];
 #define DO(x, x1) \
 	x = x1 = _mm_macc_epi32(cmul, _mm_xor_si128(x, seed_shr_30), vi0);
 			DO(aM, a1)
@@ -225,7 +261,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		}
 
 		for (i = 1; i < M; i++) {
-			__m128i vii = vi[i];
+			vtype vii = vi[i];
 #define DO(x) \
 	x = _mm_macc_epi32(cmul, _mm_xor_si128(x, _mm_srli_epi32(x, 30)), vii);
 			DO(aM)
@@ -303,14 +339,25 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #undef DO
 
 		if (match->flags & MATCH_PURE) {
-			__m128i amask = _mm_cmpeq_epi32(a, vvalue);
-			__m128i bmask = _mm_cmpeq_epi32(b, vvalue);
-			__m128i cmask = _mm_cmpeq_epi32(c, vvalue);
-			__m128i dmask = _mm_cmpeq_epi32(d, vvalue);
-			__m128i emask = _mm_cmpeq_epi32(e, vvalue);
-			__m128i fmask = _mm_cmpeq_epi32(f, vvalue);
-			__m128i gmask = _mm_cmpeq_epi32(g, vvalue);
-			__m128i hmask = _mm_cmpeq_epi32(h, vvalue);
+#ifdef __MIC__
+			if ((_mm512_cmpeq_epi32_mask(a, vvalue) |
+			    _mm512_cmpeq_epi32_mask(b, vvalue) |
+			    _mm512_cmpeq_epi32_mask(c, vvalue) |
+			    _mm512_cmpeq_epi32_mask(d, vvalue) |
+			    _mm512_cmpeq_epi32_mask(e, vvalue) |
+			    _mm512_cmpeq_epi32_mask(f, vvalue) |
+			    _mm512_cmpeq_epi32_mask(g, vvalue) |
+			    _mm512_cmpeq_epi32_mask(h, vvalue)) == 0)
+				continue;
+#else
+			vtype amask = _mm_cmpeq_epi32(a, vvalue);
+			vtype bmask = _mm_cmpeq_epi32(b, vvalue);
+			vtype cmask = _mm_cmpeq_epi32(c, vvalue);
+			vtype dmask = _mm_cmpeq_epi32(d, vvalue);
+			vtype emask = _mm_cmpeq_epi32(e, vvalue);
+			vtype fmask = _mm_cmpeq_epi32(f, vvalue);
+			vtype gmask = _mm_cmpeq_epi32(g, vvalue);
+			vtype hmask = _mm_cmpeq_epi32(h, vvalue);
 			if (_mm_testz_si128(amask, amask) &&
 			    _mm_testz_si128(bmask, bmask) &&
 			    _mm_testz_si128(cmask, cmask) &&
@@ -320,13 +367,17 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			    _mm_testz_si128(gmask, gmask) &&
 			    _mm_testz_si128(hmask, hmask))
 				continue;
+#endif
 		}
 
 		{
 			uint32_t iseed;
+#ifdef __ICC
+			volatile
+#endif
 			union {
-				__m128i v;
-				uint32_t s[4];
+				vtype v;
+				uint32_t s[sizeof(vtype) / 4];
 			} u[8], uM[8];
 			u[0].v = a;
 			u[1].v = b;
@@ -344,6 +395,20 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			uM[5].v = fM;
 			uM[6].v = gM;
 			uM[7].v = hM;
+#ifdef __MIC__
+			for (i = 0, iseed = seed; i < 8; i++, iseed += 32) {
+				unsigned int j, k;
+				for (j = 0, k = 30; j < 16; j++, k -= 2) {
+					COMPARE(u[i].s[j], uM[i].s[j],
+					    iseed + k)
+				}
+				i++;
+				for (j = 0, k = 31; j < 16; j++, k -= 2) {
+					COMPARE(u[i].s[j], uM[i].s[j],
+					    iseed + k)
+				}
+			}
+#else
 			for (i = 0, iseed = seed; i < 8; i++, iseed += 8) {
 				COMPARE(u[i].s[0], uM[i].s[0], iseed + 6)
 				COMPARE(u[i].s[1], uM[i].s[1], iseed + 4)
@@ -355,6 +420,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 				COMPARE(u[i].s[2], uM[i].s[2], iseed + 3)
 				COMPARE(u[i].s[3], uM[i].s[3], iseed + 1)
 			}
+#endif
 		}
 #else
 		do {
@@ -432,7 +498,11 @@ static unsigned int crack(const match_t *match)
 {
 	unsigned int found = 0;
 	uint32_t base;
+#ifdef __MIC__
+	const uint32_t step = 0x10000000 >> P;
+#else
 	const uint32_t step = 0x2000000 >> P;
+#endif
 	long clk_tck;
 	clock_t start_time;
 	struct tms tms;
@@ -487,7 +557,7 @@ static void parse(int argc, char **argv, match_t *match, unsigned int nmatch)
 	argc--;
 	argv++;
 
-	while (nmatch && argc) {
+	while (nmatch && argc > 0) {
 		int32_t value = parse_int(argv[0]);
 		ok = value >= 0;
 
@@ -540,7 +610,7 @@ static void parse(int argc, char **argv, match_t *match, unsigned int nmatch)
 		argv += 4;
 	}
 
-	if (!ok || (!nmatch && argc) || (last->flags & MATCH_SKIP)) {
+	if (!ok || (!nmatch && argc > 0) || (last->flags & MATCH_SKIP)) {
 		printf("Usage: %s VALUE_OR_MATCH_MIN"
 		    " [MATCH_MAX [RANGE_MIN RANGE_MAX]] ...\n", prog);
 		exit(1);

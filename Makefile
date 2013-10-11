@@ -6,5 +6,8 @@ PROJ = php_mt_seed
 php_mt_seed: php_mt_seed.c
 	$(CC) $(CFLAGS) $< -o $@
 
+mic:
+	$(MAKE) CC=icc CFLAGS='-mmic -O3 -openmp'
+
 clean:
 	$(RM) $(PROJ)
