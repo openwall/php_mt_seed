@@ -44,13 +44,77 @@
 #endif
 
 #define M 397
+#define N 624
+
+#define MATCH_PURE 1
+#define MATCH_FULL 2
+#define MATCH_SKIP 4
+#define MATCH_LAST 8
 
 typedef struct {
-	int is_pure;
+	uint32_t flags;
 	int32_t mmin, mmax;
 	int32_t rmin;
 	double rspan;
 } match_t;
+
+#define NEXT_STATE(x, i) \
+	(x) = 1812433253U * ((x) ^ ((x) >> 30)) + (i);
+
+#ifdef __SSE4_1__
+static inline int diff(uint32_t x, uint32_t xs, uint32_t seed,
+    const match_t *match)
+#else
+static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
+    const match_t *match)
+#endif
+{
+#ifdef __SSE4_1__
+	uint32_t xsi = seed;
+#else
+	uint32_t xsi = x1;
+#endif
+	unsigned int i = 1;
+
+	while (1) {
+		if (match->flags & MATCH_PURE) {
+			if (x != match->mmin)
+				break;
+		} else {
+			int32_t xr;
+			if (match->flags & MATCH_FULL)
+				xr = x;
+			else
+				xr = match->rmin +
+				    (int32_t)(match->rspan * (x) /
+				    (0x7fffffff + 1.0));
+			if (xr < match->mmin || xr > match->mmax)
+				break;
+		}
+
+		if (match->flags & MATCH_LAST)
+			return 0;
+
+#ifdef __SSE4_1__
+		if (i == 1)
+			NEXT_STATE(xsi, 1)
+#endif
+		x = xsi;
+		NEXT_STATE(xsi, i + 1)
+		NEXT_STATE(xs, M + i)
+		i++;
+		x = (((x & 0x80000000) | (xsi & 0x7fffffff)) >> 1) ^ xs ^
+		    ((x & 1) ? 0x9908b0df : 0);
+		x ^= (x >> 11);
+		x ^= (x << 7) & 0x9d2c5680;
+		x ^= (x << 15) & 0xefc60000;
+		x = (x ^ (x >> 18)) >> 1;
+
+		match++;
+	}
+
+	return -1;
+}
 
 static void print_guess(uint32_t seed, unsigned int *found)
 {
@@ -63,24 +127,15 @@ static void print_guess(uint32_t seed, unsigned int *found)
 	}
 }
 
-#define COMPARE(x, y) \
-	{ \
-		if (match->is_pure) { \
-			if ((x) == match->mmin) \
-				print_guess((y), &found); \
-		} else { \
-			int32_t z; \
-			if (match->rmin == 0 && \
-			    match->rspan == 0x7fffffff + 1.0) \
-				z = (x); \
-			else \
-				z = match->rmin + \
-				    (int32_t)(match->rspan * (x) / \
-				    (0x7fffffff + 1.0)); \
-			if (z >= match->mmin && z <= match->mmax) \
-				print_guess((y), &found); \
-		} \
-	}
+#ifdef __SSE4_1__
+#define COMPARE(x, xM, seed) \
+	if (!diff((x), (xM), (seed), match)) \
+		print_guess((seed), &found);
+#else
+#define COMPARE(x, x1, xM, seed) \
+	if (!diff((x), (x1), (xM), match)) \
+		print_guess((seed), &found);
+#endif
 
 #define P 5
 
@@ -101,7 +156,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #ifdef __SSE4_1__
 	assert(P == 5);
 
-	if (match->is_pure)
+	if (match->flags & MATCH_PURE)
 		vvalue = _mm_set1_epi32(match->mmin);
 
 	{
@@ -139,34 +194,33 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		const __m128i c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
 		const __m128i c0xefc60000 = _mm_set1_epi32(0xefc60000);
 		const __m128i c0x9908b0df = _mm_set1_epi32(0x9908b0df);
+		__m128i vseed = _mm_set1_epi32(seed);
 		__m128i a, b, c, d, e, f, g, h;
 		__m128i a1, b1, c1, d1, e1, f1, g1, h1;
+		__m128i aM, bM, cM, dM, eM, fM, gM, hM;
 		unsigned int i;
 
-		{
-			__m128i vseed = _mm_set1_epi32(seed);
-			a = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
-			b = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
-			c = _mm_add_epi32(vseed, _mm_set_epi32(8, 10, 12, 14));
-			d = _mm_add_epi32(vseed, _mm_set_epi32(9, 11, 13, 15));
-			e = _mm_add_epi32(vseed, _mm_set_epi32(16, 18, 20, 22));
-			f = _mm_add_epi32(vseed, _mm_set_epi32(17, 19, 21, 23));
-			g = _mm_add_epi32(vseed, _mm_set_epi32(24, 26, 28, 30));
-			h = _mm_add_epi32(vseed, _mm_set_epi32(25, 27, 29, 31));
-		}
+		aM = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
+		bM = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
+		cM = _mm_add_epi32(vseed, _mm_set_epi32(8, 10, 12, 14));
+		dM = _mm_add_epi32(vseed, _mm_set_epi32(9, 11, 13, 15));
+		eM = _mm_add_epi32(vseed, _mm_set_epi32(16, 18, 20, 22));
+		fM = _mm_add_epi32(vseed, _mm_set_epi32(17, 19, 21, 23));
+		gM = _mm_add_epi32(vseed, _mm_set_epi32(24, 26, 28, 30));
+		hM = _mm_add_epi32(vseed, _mm_set_epi32(25, 27, 29, 31));
 
 		{
 			__m128i vi0 = vi[0];
 #define DO(x, x1) \
 	x = x1 = _mm_macc_epi32(cmul, _mm_xor_si128(x, seed_shr_30), vi0);
-			DO(a, a1)
-			DO(b, b1)
-			DO(c, c1)
-			DO(d, d1)
-			DO(e, e1)
-			DO(f, f1)
-			DO(g, g1)
-			DO(h, h1)
+			DO(aM, a1)
+			DO(bM, b1)
+			DO(cM, c1)
+			DO(dM, d1)
+			DO(eM, e1)
+			DO(fM, f1)
+			DO(gM, g1)
+			DO(hM, h1)
 #undef DO
 		}
 
@@ -174,28 +228,28 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			__m128i vii = vi[i];
 #define DO(x) \
 	x = _mm_macc_epi32(cmul, _mm_xor_si128(x, _mm_srli_epi32(x, 30)), vii);
-			DO(a)
-			DO(b)
-			DO(c)
-			DO(d)
-			DO(e)
-			DO(f)
-			DO(g)
-			DO(h)
+			DO(aM)
+			DO(bM)
+			DO(cM)
+			DO(dM)
+			DO(eM)
+			DO(fM)
+			DO(gM)
+			DO(hM)
 #undef DO
 		}
 
-#define DO(x, x1) \
-	x = _mm_xor_si128(x, _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000, \
+#define DO(x, x1, xM) \
+	x = _mm_xor_si128(xM, _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000, \
 	    _mm_and_si128(x1, c0x7fffffff)), 1));
-		DO(a, a1)
-		DO(b, b1)
-		DO(c, c1)
-		DO(d, d1)
-		DO(e, e1)
-		DO(f, f1)
-		DO(g, g1)
-		DO(h, h1)
+		DO(a, a1, aM)
+		DO(b, b1, bM)
+		DO(c, c1, cM)
+		DO(d, d1, dM)
+		DO(e, e1, eM)
+		DO(f, f1, fM)
+		DO(g, g1, gM)
+		DO(h, h1, hM)
 #undef DO
 
 #define DO(x) \
@@ -248,7 +302,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		DO(h)
 #undef DO
 
-		if (match->is_pure) {
+		if (match->flags & MATCH_PURE) {
 			__m128i amask = _mm_cmpeq_epi32(a, vvalue);
 			__m128i bmask = _mm_cmpeq_epi32(b, vvalue);
 			__m128i cmask = _mm_cmpeq_epi32(c, vvalue);
@@ -273,7 +327,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			union {
 				__m128i v;
 				uint32_t s[4];
-			} u[8];
+			} u[8], uM[8];
 			u[0].v = a;
 			u[1].v = b;
 			u[2].v = c;
@@ -282,49 +336,58 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			u[5].v = f;
 			u[6].v = g;
 			u[7].v = h;
+			uM[0].v = aM;
+			uM[1].v = bM;
+			uM[2].v = cM;
+			uM[3].v = dM;
+			uM[4].v = eM;
+			uM[5].v = fM;
+			uM[6].v = gM;
+			uM[7].v = hM;
 			for (i = 0, iseed = seed; i < 8; i++, iseed += 8) {
-				COMPARE(u[i].s[0], iseed + 6)
-				COMPARE(u[i].s[1], iseed + 4)
-				COMPARE(u[i].s[2], iseed + 2)
-				COMPARE(u[i++].s[3], iseed)
-				COMPARE(u[i].s[0], iseed + 7)
-				COMPARE(u[i].s[1], iseed + 5)
-				COMPARE(u[i].s[2], iseed + 3)
-				COMPARE(u[i].s[3], iseed + 1)
+				COMPARE(u[i].s[0], uM[i].s[0], iseed + 6)
+				COMPARE(u[i].s[1], uM[i].s[1], iseed + 4)
+				COMPARE(u[i].s[2], uM[i].s[2], iseed + 2)
+				COMPARE(u[i].s[3], uM[i].s[3], iseed)
+				i++;
+				COMPARE(u[i].s[0], uM[i].s[0], iseed + 7)
+				COMPARE(u[i].s[1], uM[i].s[1], iseed + 5)
+				COMPARE(u[i].s[2], uM[i].s[2], iseed + 3)
+				COMPARE(u[i].s[3], uM[i].s[3], iseed + 1)
 			}
 		}
 #else
 		do {
-			uint32_t a, b, c, d, a1, b1, c1, d1;
+			uint32_t a, b, c, d, a1, b1, c1, d1, aM, bM, cM, dM;
 			unsigned int i;
 
 #define DO(x, x1, seed) \
 	x = x1 = 1812433253U * ((seed) ^ seed_shr_30) + 1;
-			DO(a, a1, seed)
-			DO(b, b1, seed + 1)
-			DO(c, c1, seed + 2)
-			DO(d, d1, seed + 3)
+			DO(aM, a1, seed)
+			DO(bM, b1, seed + 1)
+			DO(cM, c1, seed + 2)
+			DO(dM, d1, seed + 3)
 #undef DO
 			for (i = 2; i <= M; i++) {
 #define DO(x) \
-	x = 1812433253U * (x ^ (x >> 30)) + i;
-				DO(a)
-				DO(b)
-				DO(c)
-				DO(d)
+	NEXT_STATE(x, i)
+				DO(aM)
+				DO(bM)
+				DO(cM)
+				DO(dM)
 #undef DO
 			}
 
-#define DO(x, x1) \
-	x ^= (seed_and_0x80000000 | (x1 & 0x7fffffffU)) >> 1;
-			DO(a, a1)
-			DO(b, b1)
-			DO(c, c1)
-			DO(d, d1)
+#define DO(x, x1, xM) \
+	x = ((seed_and_0x80000000 | (x1 & 0x7fffffff)) >> 1) ^ xM;
+			DO(a, a1, aM)
+			DO(b, b1, bM)
+			DO(c, c1, cM)
+			DO(d, d1, dM)
 #undef DO
 
-			b ^= 0x9908b0dfU;
-			d ^= 0x9908b0dfU;
+			b ^= 0x9908b0df;
+			d ^= 0x9908b0df;
 
 #define DO(x) \
 	x ^= x >> 11;
@@ -352,10 +415,10 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			DO(d)
 #undef DO
 
-			COMPARE(a, seed)
-			COMPARE(b, seed + 1)
-			COMPARE(c, seed + 2)
-			COMPARE(d, seed + 3)
+			COMPARE(a, a1, aM, seed)
+			COMPARE(b, b1, bM, seed + 1)
+			COMPARE(c, c1, cM, seed + 2)
+			COMPARE(d, d1, dM, seed + 3)
 
 			seed += 4;
 		} while (seed & ((1 << P) - 1));
@@ -409,59 +472,108 @@ static int32_t parse_int(const char *s)
 	uvalue = ulvalue = strtoul(s, &error, 10);
 	if (!errno && !*error &&
 	    *s >= '0' && *s <= '9' &&
-	    uvalue == ulvalue && uvalue <= 0x7fffffffU)
+	    uvalue == ulvalue && uvalue <= 0x7fffffff)
 		return uvalue;
 
 	return -1;
 }
 
-static void parse(int argc, char **argv, match_t *match)
+static void parse(int argc, char **argv, match_t *match, unsigned int nmatch)
 {
+	const char *prog = argv[0] ? argv[0] : "php_mt_seed";
 	int ok = 0;
+	match_t *first = match, *last = match;
 
-	if (argc == 2 || argc == 3 || argc == 5) {
-		int32_t value = parse_int(argv[1]);
+	argc--;
+	argv++;
+
+	while (nmatch && argc) {
+		int32_t value = parse_int(argv[0]);
 		ok = value >= 0;
 
-		match->is_pure = 1;
+		match->flags = MATCH_PURE | MATCH_FULL;
 		match->mmin = match->mmax = value;
 		match->rmin = 0; match->rspan = 0x7fffffff + 1.0;
 
-		if (argc > 2) {
-			value = parse_int(argv[2]);
+		if (argc >= 2) {
+			value = parse_int(argv[1]);
 			ok &= value >= match->mmin;
-			match->is_pure = value == match->mmin;
+			if (value != match->mmin)
+				match->flags &= ~MATCH_PURE;
 			match->mmax = value;
 		}
 
-		if (argc > 4) {
-			value = parse_int(argv[3]);
+		if (argc == 3) {
+			ok = 0;
+			break;
+		}
+
+		if (argc >= 4) {
+			value = parse_int(argv[2]);
 			ok &= value >= 0 && value <= match->mmax;
-			match->is_pure &= value == 0;
+			if (value != 0)
+				match->flags &= ~(MATCH_PURE | MATCH_FULL);
 			match->rmin = value;
 
-			value = parse_int(argv[4]);
+			value = parse_int(argv[3]);
 			ok &= value >= match->rmin && value >= match->mmin;
-			match->is_pure &= value == 0x7fffffff;
+			if (value != 0x7fffffff)
+				match->flags &= ~(MATCH_PURE | MATCH_FULL);
+			if (match->mmin == match->rmin &&
+			    match->mmax == value)
+				match->flags |= MATCH_SKIP;
 			match->rspan = (double)value - match->rmin + 1.0;
 		}
+
+		if (!(match->flags & MATCH_SKIP))
+			last = match;
+
+		nmatch--;
+		match++;
+		if (!ok)
+			break;
+		if (argc <= 4) {
+			argc = 0;
+			break;
+		}
+		argc -= 4;
+		argv += 4;
 	}
 
-	if (!ok) {
+	if (!ok || (!nmatch && argc) || (last->flags & MATCH_SKIP)) {
 		printf("Usage: %s VALUE_OR_MATCH_MIN"
-		    " [MATCH_MAX [RANGE_MIN RANGE_MAX]]\n",
-		    argv[0] ? argv[0] : "php_mt_seed");
+		    " [MATCH_MAX [RANGE_MIN RANGE_MAX]] ...\n", prog);
 		exit(1);
+	}
+
+	last->flags |= MATCH_LAST;
+
+	if (match - first > 1) {
+		printf("Pattern:");
+		match = first;
+		do {
+			if (match->flags & MATCH_SKIP)
+				printf(" SKIP");
+			else if (match->flags & MATCH_PURE)
+				printf(" EXACT");
+			else if (match->flags & MATCH_FULL)
+				printf(" RANGE");
+			else if (match->mmin == match->mmax)
+				printf(" EXACT-FROM-%.0f", match->rspan);
+			else
+				printf(" RANGE-FROM-%.0f", match->rspan);
+		} while (match++ != last);
+		putchar('\n');
 	}
 }
 
 int main(int argc, char **argv)
 {
-	match_t match;
+	match_t match[N - M + 1];
 
-	parse(argc, argv, &match);
+	parse(argc, argv, match, sizeof(match) / sizeof(match[0]));
 
-	printf("\nFound %u\n", crack(&match));
+	printf("\nFound %u\n", crack(match));
 
 	return 0;
 }
