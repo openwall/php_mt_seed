@@ -165,8 +165,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	unsigned int found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
 #if defined(__SSE4_1__) || defined(__MIC__)
-	vtype vvalue;
-	vtype vi[M], seed_and_0x80000000, seed_shr_30;
+	vtype vvalue, v1, seed_and_0x80000000, seed_shr_30;
 #else
 	uint32_t seed_and_0x80000000, seed_shr_30;
 #endif
@@ -182,12 +181,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 	if (match->flags & MATCH_PURE)
 		vvalue = _mm_set1_epi32(match->mmin);
-
-	{
-		unsigned int i;
-		for (i = 1; i <= M; i++)
-			vi[i - 1] = _mm_set1_epi32(i);
-	}
+	v1 = _mm_set1_epi32(1);
 #endif
 
 	{
@@ -205,7 +199,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 #ifdef _OPENMP
 #if defined(__SSE4_1__) || defined(__MIC__)
-#pragma omp parallel for default(none) private(base) shared(match, start, end, found, vi, seed_and_0x80000000, seed_shr_30, vvalue)
+#pragma omp parallel for default(none) private(base) shared(match, start, end, found, v1, seed_and_0x80000000, seed_shr_30, vvalue)
 #else
 #pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30)
 #endif
@@ -222,7 +216,6 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		vtype a, b, c, d, e, f, g, h;
 		vtype a1, b1, c1, d1, e1, f1, g1, h1;
 		vtype aM, bM, cM, dM, eM, fM, gM, hM;
-		unsigned int i;
 
 #ifdef __MIC__
 		aM = _mm512_add_epi32(vseed, _mm512_set_epi32(
@@ -246,9 +239,11 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #endif
 
 		{
-			vtype vi0 = vi[0];
+			unsigned int n = (M - 1) / (6 * 6);
+			vtype vi = _mm_add_epi32(v1, v1);
+
 #define DO(x, x1) \
-	x = x1 = _mm_macc_epi32(cmul, _mm_xor_si128(x, seed_shr_30), vi0);
+	x = x1 = _mm_macc_epi32(cmul, _mm_xor_si128(x, seed_shr_30), v1);
 			DO(aM, a1)
 			DO(bM, b1)
 			DO(cM, c1)
@@ -258,21 +253,24 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			DO(gM, g1)
 			DO(hM, h1)
 #undef DO
-		}
 
-		for (i = 1; i < M; i++) {
-			vtype vii = vi[i];
-#define DO(x) \
-	x = _mm_macc_epi32(cmul, _mm_xor_si128(x, _mm_srli_epi32(x, 30)), vii);
-			DO(aM)
-			DO(bM)
-			DO(cM)
-			DO(dM)
-			DO(eM)
-			DO(fM)
-			DO(gM)
-			DO(hM)
+			do {
+				vtype vi1;
+#define DO(x, vi) \
+	x = _mm_macc_epi32(cmul, _mm_xor_si128(x, _mm_srli_epi32(x, 30)), vi);
+#define DO_ALL \
+		vi1 = _mm_add_epi32(vi, v1); \
+		DO(aM, vi) DO(bM, vi) DO(cM, vi) DO(dM, vi) \
+		DO(eM, vi) DO(fM, vi) DO(gM, vi) DO(hM, vi) \
+		vi = _mm_add_epi32(vi1, v1); \
+		DO(aM, vi1) DO(bM, vi1) DO(cM, vi1) DO(dM, vi1) \
+		DO(eM, vi1) DO(fM, vi1) DO(gM, vi1) DO(hM, vi1)
+				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
+				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
+				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
+#undef DO_ALL
 #undef DO
+			} while (--n);
 		}
 
 #define DO(x, x1, xM) \
@@ -371,6 +369,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		}
 
 		{
+			unsigned int i;
 			uint32_t iseed;
 #ifdef __ICC
 			volatile

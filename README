@@ -15,16 +15,16 @@ Now build and run the cracker:
 $ make
 gcc -Wall -march=native -O2 -fomit-frame-pointer -funroll-loops -fopenmp php_mt_seed.c -o php_mt_seed
 $ time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 64009458 seeds per second 
+Found 0, trying 637534208 - 671088639, speed 64855972 seeds per second 
 seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 63980908 seeds per second 
+Found 1, trying 1207959552 - 1241513983, speed 64874304 seeds per second 
 seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 63965969 seeds per second 
+Found 2, trying 4261412864 - 4294967295, speed 64861687 seeds per second 
 Found 2
 
-real    1m7.152s
-user    8m56.774s
-sys     0m0.012s
+real    1m6.218s
+user    8m49.165s
+sys     0m0.020s
 
 In one minute of real time (on an FX-8120 CPU, using vectorized fused
 multiply-add instructions), it found the original seed, another seed
@@ -36,11 +36,11 @@ Testing on a bigger machine (two E5-2670 CPUs):
 $ OMP_NUM_THREADS=16 time ./php_mt_seed 1328851649
 Found 0, trying 637534208 - 671088639, speed 237885898 seeds per second 
 seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 237787313 seeds per second 
+Found 1, trying 1207959552 - 1241513983, speed 238256321 seeds per second 
 seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 237669429 seeds per second 
+Found 2, trying 4261412864 - 4294967295, speed 238200830 seeds per second 
 Found 2
-288.49user 0.00system 0:18.07elapsed 1596%CPU (0avgtext+0avgdata 3312maxresident)k
+287.87user 0.00system 0:18.03elapsed 1596%CPU (0avgtext+0avgdata 3296maxresident)k
 
 Matching of multiple outputs, including inexact:
 
@@ -49,19 +49,19 @@ $ php5 -r 'mt_srand(1234567890); for ($i = 0; $i < 10; $i++) { echo mt_rand(0, 9
 
 $ OMP_NUM_THREADS=16 time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
 Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
-Found 0, trying 1207959552 - 1241513983, speed 205086511 seeds per second 
+Found 0, trying 1207959552 - 1241513983, speed 205435297 seeds per second 
 seed = 1234567890
-Found 1, trying 1409286144 - 1442840575, speed 205136265 seeds per second 
+Found 1, trying 1409286144 - 1442840575, speed 205435297 seeds per second 
 seed = 1414163717
-Found 2, trying 1879048192 - 1912602623, speed 205136265 seeds per second 
+Found 2, trying 1879048192 - 1912602623, speed 205585141 seeds per second 
 seed = 1893625793
-Found 3, trying 2785017856 - 2818572287, speed 205233445 seeds per second 
+Found 3, trying 2785017856 - 2818572287, speed 205536373 seeds per second 
 seed = 2804485451
-Found 4, trying 3791650816 - 3825205247, speed 205286995 seeds per second 
+Found 4, trying 3791650816 - 3825205247, speed 205509529 seeds per second 
 seed = 3810276440
-Found 5, trying 4261412864 - 4294967295, speed 205270369 seeds per second 
+Found 5, trying 4261412864 - 4294967295, speed 205567431 seeds per second 
 Found 5
-334.08user 0.00system 0:20.92elapsed 1596%CPU (0avgtext+0avgdata 19792maxresident)k
+333.60user 0.00system 0:20.90elapsed 1596%CPU (0avgtext+0avgdata 3472maxresident)k
 
 Notice how "7 8 0 9" specifies a range of possible values (7 to 8), and
 "0 0 0 0" means to skip (ignore) this one mt_rand() output value.  In
@@ -74,33 +74,35 @@ OpenMP runtime library (such as libiomp5.so) to the Xeon Phi card, e.g.
 using scp.  Then SSH in to the card and run a command like:
 
 $ LD_LIBRARY_PATH=. time ./php_mt_seed 1328851649
-Found 0, trying 536870912 - 805306367, speed 365218307 seeds per second
+Found 0, trying 536870912 - 805306367, speed 440058124 seeds per second 
 seed = 658126103
-Found 1, trying 1073741824 - 1342177279, speed 408266853 seeds per second
+Found 1, trying 1073741824 - 1342177279, speed 511305630 seeds per second 
 seed = 1234567890
-Found 2, trying 4026531840 - 4294967295, speed 447392426 seeds per second
+Found 2, trying 4026531840 - 4294967295, speed 579357099 seeds per second 
 Found 2
-real    0m 9.72s
-user    37m 35.80s
-sys     0m 12.80s
+real    0m 7.60s
+user    28m 45.01s
+sys     0m 3.78s
+
+This is on a Xeon Phi 5110P.
 
 Advanced invocation modes work too, but the performance impact of the
 non-vectorized portions of code is higher than on regular CPUs:
 
 $ LD_LIBRARY_PATH=. time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
 Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
-Found 0, trying 1073741824 - 1342177279, speed 304176154 seeds per second
+Found 0, trying 1073741824 - 1342177279, speed 348617475 seeds per second 
 seed = 1234567890
-Found 1, trying 1342177280 - 1610612735, speed 309257437 seeds per second
+Found 1, trying 1342177280 - 1610612735, speed 356015193 seeds per second 
 seed = 1414163717
-Found 2, trying 1879048192 - 2147483647, speed 315806418 seeds per second
+Found 2, trying 1879048192 - 2147483647, speed 365573578 seeds per second 
 seed = 1893625793
-Found 3, trying 2684354560 - 2952790015, speed 320711416 seeds per second
+Found 3, trying 2684354560 - 2952790015, speed 372309925 seeds per second 
 seed = 2804485451
-Found 4, trying 3758096384 - 4026531839, speed 324253354 seeds per second
+Found 4, trying 3758096384 - 4026531839, speed 377318914 seeds per second 
 seed = 3810276440
-Found 5, trying 4026531840 - 4294967295, speed 324720309 seeds per second
+Found 5, trying 4026531840 - 4294967295, speed 378078107 seeds per second 
 Found 5
-real    0m 13.32s
-user    52m 1.17s
-sys     0m 14.90s
+real    0m 11.40s
+user    44m 38.16s
+sys     0m 1.67s
