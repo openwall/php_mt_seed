@@ -17,9 +17,7 @@
 
 #ifdef __MIC__
 #include <immintrin.h>
-
 typedef __m512i vtype;
-
 /* hack */
 #define _mm_set1_epi32(x) _mm512_set1_epi32(x)
 #define _mm_add_epi32(x, y) _mm512_add_epi32(x, y)
@@ -29,21 +27,34 @@ typedef __m512i vtype;
 #define _mm_and_si128(x, y) _mm512_and_epi32(x, y)
 #define _mm_or_si128(x, y) _mm512_or_epi32(x, y)
 #define _mm_xor_si128(x, y) _mm512_xor_epi32(x, y)
+#elif defined(__AVX2__)
+#include <x86intrin.h>
+typedef __m256i vtype;
+/* hack */
+#define _mm_set1_epi32(x) _mm256_set1_epi32(x)
+#define _mm_add_epi32(x, y) _mm256_add_epi32(x, y)
+#define _mm_macc_epi32(x, y, z) \
+	_mm256_add_epi32(_mm256_mullo_epi32((x), (y)), (z))
+#define _mm_slli_epi32(x, i) _mm256_slli_epi32(x, i)
+#define _mm_srli_epi32(x, i) _mm256_srli_epi32(x, i)
+#define _mm_and_si128(x, y) _mm256_and_si256(x, y)
+#define _mm_or_si128(x, y) _mm256_or_si256(x, y)
+#define _mm_xor_si128(x, y) _mm256_xor_si256(x, y)
+#define _mm_cmpeq_epi32(x, y) _mm256_cmpeq_epi32(x, y)
+#define _mm_testz_si128(x, y) _mm256_testz_si256(x, y)
 #elif defined(__SSE4_1__)
 #include <emmintrin.h>
 #include <smmintrin.h>
-
 typedef __m128i vtype;
-
 #ifdef __XOP__
 #include <x86intrin.h>
 #else
 #define _mm_macc_epi32(a, b, c) \
 	_mm_add_epi32(_mm_mullo_epi32((a), (b)), (c))
 #ifdef __AVX__
-#warning XOP not enabled, will not use fused multiply-add. Try gcc -mxop (only on AMD Bulldozer or newer).
+#warning XOP and AVX2 are not enabled. Try gcc -mxop (on AMD Bulldozer or newer) or -mavx2 (on Intel Haswell or newer).
 #else
-#warning AVX and XOP are not enabled, will not use fused multiply-add. Try gcc -mxop (only on AMD Bulldozer or newer) or -mavx (on Intel Sandy Bridge or newer).
+#warning AVX* and XOP are not enabled. Try gcc -mxop (on AMD Bulldozer or newer), -mavx (on Intel Sandy Bridge or newer), or -mavx2 (on Intel Haswell or newer).
 #endif
 #endif
 #else
@@ -77,7 +88,7 @@ typedef struct {
 #define NEXT_STATE(x, i) \
 	(x) = 1812433253U * ((x) ^ ((x) >> 30)) + (i);
 
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 static inline int diff(uint32_t x, uint32_t xs, uint32_t seed,
     const match_t *match)
 #else
@@ -85,7 +96,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
     const match_t *match)
 #endif
 {
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 	uint32_t xsi = seed;
 #else
 	uint32_t xsi = x1;
@@ -111,7 +122,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 		if (match->flags & MATCH_LAST)
 			return 0;
 
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 		if (i == 1)
 			NEXT_STATE(xsi, 1)
 #endif
@@ -143,7 +154,7 @@ static void print_guess(uint32_t seed, unsigned int *found)
 	}
 }
 
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 #define COMPARE(x, xM, seed) \
 	if (!diff((x), (xM), (seed), match)) \
 		print_guess((seed), &found);
@@ -155,6 +166,8 @@ static void print_guess(uint32_t seed, unsigned int *found)
 
 #ifdef __MIC__
 #define P 7
+#elif defined(__AVX2__)
+#define P 6
 #else
 #define P 5
 #endif
@@ -164,7 +177,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 {
 	unsigned int found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 	vtype vvalue, v1, seed_and_0x80000000, seed_shr_30;
 #else
 	uint32_t seed_and_0x80000000, seed_shr_30;
@@ -172,13 +185,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 	assert((start >> (30 - P)) == ((end - 1) >> (30 - P)));
 
-#if defined(__SSE4_1__) || defined(__MIC__)
-#ifdef __MIC__
-	assert(P == 7);
-#else
-	assert(P == 5);
-#endif
-
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 	if (match->flags & MATCH_PURE)
 		vvalue = _mm_set1_epi32(match->mmin);
 	v1 = _mm_set1_epi32(1);
@@ -186,7 +193,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 	{
 		uint32_t seed = (uint32_t)start << P;
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 		vtype vseed = _mm_set1_epi32(seed);
 		const vtype c0x80000000 = _mm_set1_epi32(0x80000000);
 		seed_and_0x80000000 = _mm_and_si128(vseed, c0x80000000);
@@ -198,7 +205,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	}
 
 #ifdef _OPENMP
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 #pragma omp parallel for default(none) private(base) shared(match, start, end, found, v1, seed_and_0x80000000, seed_shr_30, vvalue)
 #else
 #pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30)
@@ -206,7 +213,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #endif
 	for (base = start; base < end; base++) {
 		uint32_t seed = (uint32_t)base << P;
-#if defined(__SSE4_1__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
 		const vtype cmul = _mm_set1_epi32(1812433253U);
 		const vtype c0x7fffffff = _mm_set1_epi32(0x7fffffff);
 		const vtype c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
@@ -227,6 +234,16 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		fM = _mm512_add_epi32(aM, _mm512_set1_epi32(65));
 		gM = _mm512_add_epi32(aM, _mm512_set1_epi32(96));
 		hM = _mm512_add_epi32(aM, _mm512_set1_epi32(97));
+#elif defined(__AVX2__)
+		aM = _mm256_add_epi32(vseed, _mm256_set_epi32(
+		    0, 2, 4, 6, 8, 10, 12, 14));
+		bM = _mm256_add_epi32(aM, _mm256_set1_epi32(1));
+		cM = _mm256_add_epi32(aM, _mm256_set1_epi32(16));
+		dM = _mm256_add_epi32(aM, _mm256_set1_epi32(17));
+		eM = _mm256_add_epi32(aM, _mm256_set1_epi32(32));
+		fM = _mm256_add_epi32(aM, _mm256_set1_epi32(33));
+		gM = _mm256_add_epi32(aM, _mm256_set1_epi32(48));
+		hM = _mm256_add_epi32(aM, _mm256_set1_epi32(49));
 #else
 		aM = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
 		bM = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
@@ -403,6 +420,19 @@ static unsigned int crack_range(int32_t start, int32_t end,
 				}
 				i++;
 				for (j = 0, k = 31; j < 16; j++, k -= 2) {
+					COMPARE(u[i].s[j], uM[i].s[j],
+					    iseed + k)
+				}
+			}
+#elif defined(__AVX2__)
+			for (i = 0, iseed = seed; i < 8; i++, iseed += 16) {
+				unsigned int j, k;
+				for (j = 0, k = 14; j < 8; j++, k -= 2) {
+					COMPARE(u[i].s[j], uM[i].s[j],
+					    iseed + k)
+				}
+				i++;
+				for (j = 0, k = 15; j < 8; j++, k -= 2) {
 					COMPARE(u[i].s[j], uM[i].s[j],
 					    iseed + k)
 				}

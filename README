@@ -26,12 +26,27 @@ real    1m6.218s
 user    8m49.165s
 sys     0m0.020s
 
-In one minute of real time (on an FX-8120 CPU, using vectorized fused
-multiply-add instructions), it found the original seed, another seed
-that also produces the same mt_rand() output, and it searched the rest
-of the 32-bit seed space (not finding other matches).
+In one minute of real time on an FX-8120 CPU, using AMD XOP's vectorized
+fused multiply-add instructions, it found the original seed, another
+seed that also produces the same mt_rand() output, and it searched the
+rest of the 32-bit seed space (not finding other matches).
 
-Testing on a bigger machine (two E5-2670 CPUs):
+Intel AVX2 (no integer fused multiply-add, but 256- rather than 128-bit
+vectors) provides a slightly higher speed, on a Core i7-4770K CPU:
+
+$ time ./php_mt_seed 1328851649
+Found 0, trying 637534208 - 671088639, speed 89667258 seeds per second 
+seed = 658126103
+Found 1, trying 1207959552 - 1241513983, speed 89811119 seeds per second 
+seed = 1234567890
+Found 2, trying 4261412864 - 4294967295, speed 89808490 seeds per second 
+Found 2
+
+real    0m47.826s
+user    6m19.100s
+sys     0m0.008s
+
+Testing on a bigger machine (two E5-2670 CPUs, using 128-bit AVX):
 
 $ OMP_NUM_THREADS=16 time ./php_mt_seed 1328851649
 Found 0, trying 637534208 - 671088639, speed 237885898 seeds per second 
@@ -42,10 +57,15 @@ Found 2, trying 4261412864 - 4294967295, speed 238200830 seeds per second
 Found 2
 287.87user 0.00system 0:18.03elapsed 1596%CPU (0avgtext+0avgdata 3296maxresident)k
 
+Somehow 32 threads (to match the logical CPU count) results in a lower
+speed with this specific build on this specific machine; YMMV.
+
 Matching of multiple outputs, including inexact:
 
 $ php5 -r 'mt_srand(1234567890); for ($i = 0; $i < 10; $i++) { echo mt_rand(0, 9), " "; } echo "\n";'
 6 6 4 1 1 2 8 4 5 8
+
+On the same machine as above:
 
 $ OMP_NUM_THREADS=16 time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
 Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
@@ -84,7 +104,7 @@ real    0m 7.60s
 user    28m 45.01s
 sys     0m 3.78s
 
-This is on a Xeon Phi 5110P.
+This is on a Xeon Phi 5110P, running 240 threads (as it should).
 
 Advanced invocation modes work too, but the performance impact of the
 non-vectorized portions of code is higher than on regular CPUs:
@@ -106,3 +126,9 @@ Found 5
 real    0m 11.40s
 user    44m 38.16s
 sys     0m 1.67s
+
+All of the above benchmarks are on CPUs running at stock clocks, with
+turbo boost and HT enabled (where applicable).  Compiler versions vary
+(gcc 4.6.x to pre-4.9.0 snapshots; icc 14.0.0), and so do Linux
+distributions and kernel versions (which affects how threads are
+scheduled across the logical CPUs).  And yes, all of these are on Linux.
