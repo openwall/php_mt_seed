@@ -696,7 +696,7 @@ static void parse(int argc, char **argv, match_t *match, unsigned int nmatch)
 
 int main(int argc, char **argv)
 {
-	match_t match[N - M + 1];
+	match_t match[N - M];
 
 	parse(argc, argv, match, sizeof(match) / sizeof(match[0]));
 
