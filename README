@@ -88,10 +88,11 @@ Notice how "7 8 0 9" specifies a range of possible values (7 to 8), and
 our case, this uncertainty results in several additional possible seeds
 being found.
 
-To build php_mt_seed for Xeon Phi, install Intel's C compiler and run
-"make mic".  To run php_mt_seed on Xeon Phi, copy Intel C compiler's
-OpenMP runtime library (such as libiomp5.so) to the Xeon Phi card, e.g.
-using scp.  Then SSH in to the card and run a command like:
+To build php_mt_seed for first generation Xeon Phi (Knights Corner),
+install Intel's C compiler and run "make mic".  To run php_mt_seed on
+Xeon Phi, copy Intel C compiler's OpenMP runtime library (such as
+libiomp5.so) to the Xeon Phi card, e.g. using scp.  Then SSH in to the
+card and run a command like:
 
 $ LD_LIBRARY_PATH=. time ./php_mt_seed 1328851649
 Found 0, trying 536870912 - 805306367, speed 440058124 seeds per second 
@@ -126,6 +127,12 @@ Found 5
 real    0m 11.40s
 user    44m 38.16s
 sys     0m 1.67s
+
+Building and running on second generation Xeon Phi (Knights Landing) and
+later doesn't necessarily require a special make target since those
+support AVX-512 (which recent gcc supports too) and doesn't necessarily
+require any runtime library tricks (perhaps not when Xeon Phi is the
+host CPU rather than a coprocessor).
 
 All of the above benchmarks are on CPUs running at stock clocks, with
 turbo boost and HT enabled (where applicable).  Compiler versions vary

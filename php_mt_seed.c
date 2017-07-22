@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2014 Solar Designer <solar at openwall.com>
+ * Copyright (c) 2012-2014,2017 Solar Designer <solar at openwall.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted.
@@ -15,13 +15,18 @@
 #include <sys/times.h>
 #include <assert.h>
 
-#ifdef __MIC__
+#if defined(__MIC__) || defined(__AVX512F__)
 #include <immintrin.h>
 typedef __m512i vtype;
 /* hack */
 #define _mm_set1_epi32(x) _mm512_set1_epi32(x)
 #define _mm_add_epi32(x, y) _mm512_add_epi32(x, y)
+#ifdef __MIC__
 #define _mm_macc_epi32(x, y, z) _mm512_fmadd_epi32(x, y, z)
+#else
+#define _mm_macc_epi32(x, y, z) \
+	_mm512_add_epi32(_mm512_mullo_epi32((x), (y)), (z))
+#endif
 #define _mm_slli_epi32(x, i) _mm512_slli_epi32(x, i)
 #define _mm_srli_epi32(x, i) _mm512_srli_epi32(x, i)
 #define _mm_and_si128(x, y) _mm512_and_epi32(x, y)
@@ -178,7 +183,7 @@ static void print_guess(uint32_t seed, unsigned int *found)
 		print_guess((seed), &found);
 #endif
 
-#ifdef __MIC__
+#if defined(__MIC__) || defined(__AVX512F__)
 #define P 7
 #elif defined(__AVX2__)
 #define P 6
@@ -245,7 +250,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		vtype a1, b1, c1, d1, e1, f1, g1, h1;
 		vtype aM, bM, cM, dM, eM, fM, gM, hM;
 
-#ifdef __MIC__
+#if defined(__MIC__) || defined(__AVX512F__)
 		aM = _mm512_add_epi32(vseed, _mm512_set_epi32(
 		    0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30));
 		bM = _mm512_add_epi32(aM, _mm512_set1_epi32(1));
@@ -376,7 +381,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 #if defined(__SSE4_1__) || defined(__MIC__)
 		if (match->flags & MATCH_PURE) {
-#ifdef __MIC__
+#if defined(__MIC__) || defined(__AVX512F__)
 			if ((_mm512_cmpeq_epi32_mask(a, vvalue) |
 			    _mm512_cmpeq_epi32_mask(b, vvalue) |
 			    _mm512_cmpeq_epi32_mask(c, vvalue) |
@@ -434,7 +439,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			uM[5].v = fM;
 			uM[6].v = gM;
 			uM[7].v = hM;
-#ifdef __MIC__
+#if defined(__MIC__) || defined(__AVX512F__)
 			for (i = 0, iseed = seed; i < 8; i++, iseed += 32) {
 				unsigned int j, k;
 				for (j = 0, k = 30; j < 16; j++, k -= 2) {
@@ -550,7 +555,7 @@ static unsigned int crack(const match_t *match)
 {
 	unsigned int found = 0;
 	uint32_t base;
-#ifdef __MIC__
+#if defined(__MIC__) || defined(__AVX512F__)
 	const uint32_t step = 0x10000000 >> P;
 #else
 	const uint32_t step = 0x2000000 >> P;
