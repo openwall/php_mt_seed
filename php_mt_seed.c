@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012,2013 Solar Designer <solar at openwall.com>
+ * Copyright (c) 2012-2014 Solar Designer <solar at openwall.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted.
@@ -42,28 +42,42 @@ typedef __m256i vtype;
 #define _mm_xor_si128(x, y) _mm256_xor_si256(x, y)
 #define _mm_cmpeq_epi32(x, y) _mm256_cmpeq_epi32(x, y)
 #define _mm_testz_si128(x, y) _mm256_testz_si256(x, y)
-#elif defined(__SSE4_1__)
+#elif defined(__SSE2__)
 #include <emmintrin.h>
-#include <smmintrin.h>
 typedef __m128i vtype;
 #ifdef __XOP__
 #include <x86intrin.h>
 #else
+#ifdef __SSE4_1__
+#include <smmintrin.h>
+#else
+#ifdef __GNUC__
+#define _mm_mullo_epi32(a, b) ({ \
+		__m128i _a = (a), _b = (b); \
+		_mm_unpacklo_epi32( \
+		    _mm_shuffle_epi32(_mm_mul_epu32(_a, _b), 0x08), \
+		    _mm_shuffle_epi32(_mm_mul_epu32(_mm_srli_epi64(_a, 32), \
+		    _mm_srli_epi64(_b, 32)), 0x08)); \
+	})
+#else
+#define _mm_mullo_epi32(a, b) \
+	_mm_unpacklo_epi32( \
+	    _mm_shuffle_epi32(_mm_mul_epu32((a), (b)), 0x08), \
+	    _mm_shuffle_epi32(_mm_mul_epu32(_mm_srli_epi64((a), 32), \
+	    _mm_srli_epi64((b), 32)), 0x08))
+#endif
+#warning SSE4.1 not enabled, will use only SSE2 doing only 2 multiplies per 4-element vector. Try gcc -msse4 (only on capable CPUs).
+#endif
 #define _mm_macc_epi32(a, b, c) \
 	_mm_add_epi32(_mm_mullo_epi32((a), (b)), (c))
 #ifdef __AVX__
 #warning XOP and AVX2 are not enabled. Try gcc -mxop (on AMD Bulldozer or newer) or -mavx2 (on Intel Haswell or newer).
-#else
+#elif defined(__SSE4_1__)
 #warning AVX* and XOP are not enabled. Try gcc -mxop (on AMD Bulldozer or newer), -mavx (on Intel Sandy Bridge or newer), or -mavx2 (on Intel Haswell or newer).
 #endif
 #endif
 #else
-/*
- * We require at least SSE4.1 for vectorization because we use
- * SSE4.1's _mm_mullo_epi32() or XOP's _mm_macc_epi32(), as well as SSE4.1's
- * _mm_testz_si128().
- */
-#warning SSE4.1 not enabled, will use non-vectorized code. Try gcc -msse4 (only on capable CPUs).
+#warning SSE2 not enabled, will use non-vectorized code. Try gcc -msse2 (only on capable CPUs).
 #endif
 
 #ifndef _OPENMP
@@ -88,7 +102,7 @@ typedef struct {
 #define NEXT_STATE(x, i) \
 	(x) = 1812433253U * ((x) ^ ((x) >> 30)) + (i);
 
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE2__) || defined(__MIC__)
 static inline int diff(uint32_t x, uint32_t xs, uint32_t seed,
     const match_t *match)
 #else
@@ -96,7 +110,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
     const match_t *match)
 #endif
 {
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE2__) || defined(__MIC__)
 	uint32_t xsi = seed;
 #else
 	uint32_t xsi = x1;
@@ -122,7 +136,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 		if (match->flags & MATCH_LAST)
 			return 0;
 
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE2__) || defined(__MIC__)
 		if (i == 1)
 			NEXT_STATE(xsi, 1)
 #endif
@@ -154,7 +168,7 @@ static void print_guess(uint32_t seed, unsigned int *found)
 	}
 }
 
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE2__) || defined(__MIC__)
 #define COMPARE(x, xM, seed) \
 	if (!diff((x), (xM), (seed), match)) \
 		print_guess((seed), &found);
@@ -177,23 +191,28 @@ static unsigned int crack_range(int32_t start, int32_t end,
 {
 	unsigned int found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
-	vtype vvalue, v1, seed_and_0x80000000, seed_shr_30;
+#if defined(__SSE4_1__) || defined(__MIC__)
+	vtype vvalue;
+#endif
+#if defined(__SSE2__) || defined(__MIC__)
+	vtype v1, seed_and_0x80000000, seed_shr_30;
 #else
 	uint32_t seed_and_0x80000000, seed_shr_30;
 #endif
 
 	assert((start >> (30 - P)) == ((end - 1) >> (30 - P)));
 
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__MIC__)
 	if (match->flags & MATCH_PURE)
 		vvalue = _mm_set1_epi32(match->mmin);
+#endif
+#if defined(__SSE2__) || defined(__MIC__)
 	v1 = _mm_set1_epi32(1);
 #endif
 
 	{
 		uint32_t seed = (uint32_t)start << P;
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE2__) || defined(__MIC__)
 		vtype vseed = _mm_set1_epi32(seed);
 		const vtype c0x80000000 = _mm_set1_epi32(0x80000000);
 		seed_and_0x80000000 = _mm_and_si128(vseed, c0x80000000);
@@ -205,15 +224,17 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	}
 
 #ifdef _OPENMP
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE4_1__) || defined(__MIC__)
 #pragma omp parallel for default(none) private(base) shared(match, start, end, found, v1, seed_and_0x80000000, seed_shr_30, vvalue)
+#elif defined(__SSE2__)
+#pragma omp parallel for default(none) private(base) shared(match, start, end, found, v1, seed_and_0x80000000, seed_shr_30)
 #else
 #pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30)
 #endif
 #endif
 	for (base = start; base < end; base++) {
 		uint32_t seed = (uint32_t)base << P;
-#if defined(__SSE4_1__) || defined(__AVX2__) || defined(__MIC__)
+#if defined(__SSE2__) || defined(__MIC__)
 		const vtype cmul = _mm_set1_epi32(1812433253U);
 		const vtype c0x7fffffff = _mm_set1_epi32(0x7fffffff);
 		const vtype c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
@@ -353,6 +374,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		DO(h)
 #undef DO
 
+#if defined(__SSE4_1__) || defined(__MIC__)
 		if (match->flags & MATCH_PURE) {
 #ifdef __MIC__
 			if ((_mm512_cmpeq_epi32_mask(a, vvalue) |
@@ -384,6 +406,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 				continue;
 #endif
 		}
+#endif
 
 		{
 			unsigned int i;
