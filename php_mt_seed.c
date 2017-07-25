@@ -21,11 +21,9 @@ typedef __m512i vtype;
 /* hack */
 #define _mm_set1_epi32(x) _mm512_set1_epi32(x)
 #define _mm_add_epi32(x, y) _mm512_add_epi32(x, y)
+#define _mm_mullo_epi32(x, y) _mm512_mullo_epi32(x, y)
 #ifdef __MIC__
 #define _mm_macc_epi32(x, y, z) _mm512_fmadd_epi32(x, y, z)
-#else
-#define _mm_macc_epi32(x, y, z) \
-	_mm512_add_epi32(_mm512_mullo_epi32((x), (y)), (z))
 #endif
 #define _mm_slli_epi32(x, i) _mm512_slli_epi32(x, i)
 #define _mm_srli_epi32(x, i) _mm512_srli_epi32(x, i)
@@ -38,8 +36,7 @@ typedef __m256i vtype;
 /* hack */
 #define _mm_set1_epi32(x) _mm256_set1_epi32(x)
 #define _mm_add_epi32(x, y) _mm256_add_epi32(x, y)
-#define _mm_macc_epi32(x, y, z) \
-	_mm256_add_epi32(_mm256_mullo_epi32((x), (y)), (z))
+#define _mm_mullo_epi32(x, y) _mm256_mullo_epi32(x, y)
 #define _mm_slli_epi32(x, i) _mm256_slli_epi32(x, i)
 #define _mm_srli_epi32(x, i) _mm256_srli_epi32(x, i)
 #define _mm_and_si128(x, y) _mm256_and_si256(x, y)
@@ -47,6 +44,7 @@ typedef __m256i vtype;
 #define _mm_xor_si128(x, y) _mm256_xor_si256(x, y)
 #define _mm_cmpeq_epi32(x, y) _mm256_cmpeq_epi32(x, y)
 #define _mm_testz_si128(x, y) _mm256_testz_si256(x, y)
+#warning AVX-512 not enabled. Try gcc -mavx512f (on Intel Knights Landing, Skylake-X, or some newer).
 #elif defined(__SSE2__)
 #include <emmintrin.h>
 typedef __m128i vtype;
@@ -71,18 +69,21 @@ typedef __m128i vtype;
 	    _mm_shuffle_epi32(_mm_mul_epu32(_mm_srli_epi64((a), 32), \
 	    _mm_srli_epi64((b), 32)), 0x08))
 #endif
-#warning SSE4.1 not enabled, will use only SSE2 doing only 2 multiplies per 4-element vector. Try gcc -msse4 (only on capable CPUs).
+#warning SSE4.1 not enabled, will use only SSE2 doing only 2 multiplies per 4-element vector. Try gcc -msse4 (on capable CPUs).
 #endif
-#define _mm_macc_epi32(a, b, c) \
-	_mm_add_epi32(_mm_mullo_epi32((a), (b)), (c))
 #ifdef __AVX__
-#warning XOP and AVX2 are not enabled. Try gcc -mxop (on AMD Bulldozer or newer) or -mavx2 (on Intel Haswell or newer).
+#warning XOP and AVX2 are not enabled. Try gcc -mxop (on AMD Bulldozer or some newer) or -mavx2 (on Intel Haswell, AMD Zen, or newer).
 #elif defined(__SSE4_1__)
-#warning AVX* and XOP are not enabled. Try gcc -mxop (on AMD Bulldozer or newer), -mavx (on Intel Sandy Bridge or newer), or -mavx2 (on Intel Haswell or newer).
+#warning AVX* and XOP are not enabled. Try gcc -mxop (on AMD Bulldozer or some newer), -mavx (on Intel Sandy Bridge or newer), or -mavx2 (on Intel Haswell, AMD Zen, or newer).
 #endif
 #endif
 #else
-#warning SSE2 not enabled, will use non-vectorized code. Try gcc -msse2 (only on capable CPUs).
+#warning SSE2 not enabled, will use non-vectorized code. Try gcc -msse2 (on non-ancient x86 CPUs).
+#endif
+
+#if !defined(__XOP__) && !defined(_mm_macc_epi32)
+#define _mm_macc_epi32(x, y, z) \
+	_mm_add_epi32(_mm_mullo_epi32(x, y), z)
 #endif
 
 #ifndef _OPENMP
