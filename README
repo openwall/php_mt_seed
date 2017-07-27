@@ -132,10 +132,45 @@ Building and running on second generation Xeon Phi (Knights Landing) and
 later doesn't necessarily require a special make target since those
 support AVX-512 (which recent gcc supports too) and doesn't necessarily
 require any runtime library tricks (perhaps not when Xeon Phi is the
-host CPU rather than a coprocessor).
+host CPU rather than a coprocessor).  Here are the same benchmarks on a
+Xeon Phi 7290 used as the host processor:
+
+$ time ./php_mt_seed 1328851649
+Found 0, trying 536870912 - 805306367, speed 1248537004 seeds per second
+seed = 658126103
+Found 1, trying 1073741824 - 1342177279, speed 1359166865 seeds per second
+seed = 1234567890
+Found 2, trying 4026531840 - 4294967295, speed 1453621602 seeds per second
+Found 2
+
+real    0m2.952s
+user    13m51.549s
+sys     0m1.213s
+
+$ time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
+Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
+Found 0, trying 1073741824 - 1342177279, speed 1130254551 seeds per second
+seed = 1234567890
+Found 1, trying 1342177280 - 1610612735, speed 1147160068 seeds per second
+seed = 1414163717
+Found 2, trying 1879048192 - 2147483647, speed 1181791315 seeds per second
+seed = 1893625793
+Found 3, trying 2684354560 - 2952790015, speed 1203746439 seeds per second
+seed = 2804485451
+Found 4, trying 3758096384 - 4026531839, speed 1224135629 seeds per second
+seed = 3810276440
+Found 5, trying 4026531840 - 4294967295, speed 1227601170 seeds per second
+Found 5
+
+real    0m3.501s
+user    16m17.088s
+sys     0m0.096s
+
+This is when building with gcc 7.1.1.  The speeds with icc 17.0.4 happen
+to be around 10% worse.
 
 All of the above benchmarks are on CPUs running at stock clocks, with
 turbo boost and HT enabled (where applicable).  Compiler versions vary
-(gcc 4.6.x to pre-4.9.0 snapshots; icc 14.0.0), and so do Linux
+(gcc 4.6.x to 7.1.1; icc 14.0.0 and 17.0.4), and so do Linux
 distributions and kernel versions (which affects how threads are
 scheduled across the logical CPUs).  And yes, all of these are on Linux.
