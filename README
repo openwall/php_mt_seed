@@ -1,87 +1,96 @@
 This is a PHP mt_rand() seed cracker.  In the most trivial invocation
 mode, it finds possible seeds given the very first mt_rand() output
 after possible seeding with mt_srand().  With advanced invocation modes,
-is also able to match multiple, non-first, and/or inexact mt_rand()
+it is also able to match multiple, non-first, and/or inexact mt_rand()
 outputs to possible seed values.
 
-Here's a sample run.  First, generate a sample "random" number (using
-PHP 5.3.x in this case):
+Currently, it attacks the mt_rand() algorithm of PHP versions 5.2.1
+through 7.0.x.  PHP below 5.2.1 is totally unsupported.  PHP 7.1.0+ is
+mostly unsupported, although in the simplest modes PHP 7.1.0+ seeds will
+occasionally be found (in those special cases where the algorithm does
+not deviate from 5.2.1's).
+
+Here's a sample run.  First generate a sample "random" number using PHP
+5.2.1 through 7.0.x:
 
 $ php5 -r 'mt_srand(1234567890); echo mt_rand(), "\n";'
 1328851649
 
-Now build and run the cracker:
+Now build and run the cracker (on an i7-4770K CPU, using 256-bit AVX2):
 
 $ make
-gcc -Wall -march=native -O2 -fomit-frame-pointer -funroll-loops -fopenmp php_mt_seed.c -o php_mt_seed
+gcc -Wall -march=native -mtune=generic -O2 -fomit-frame-pointer -funroll-loops -fopenmp php_mt_seed.c -o php_mt_seed
+php_mt_seed.c:47:2: warning: #warning AVX-512 not enabled. Try gcc -mavx512f (on Intel Knights Landing, Skylake-X, or some newer). [-Wcpp]
+ #warning AVX-512 not enabled. Try gcc -mavx512f (on Intel Knights Landing, Skylake-X, or some newer).
+  ^
 $ time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 64855972 seeds per second 
+Found 0, trying 637534208 - 671088639, speed 90430384 seeds per second 
 seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 64874304 seeds per second 
+Found 1, trying 1207959552 - 1241513983, speed 90483861 seeds per second 
 seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 64861687 seeds per second 
+Found 2, trying 4261412864 - 4294967295, speed 90495070 seeds per second 
 Found 2
 
-real    1m6.218s
-user    8m49.165s
-sys     0m0.020s
+real	0m47.464s
+user	6m17.200s
+sys	0m0.004s
 
-In one minute of real time on an FX-8120 CPU, using AMD XOP's vectorized
-fused multiply-add instructions, it found the original seed, another
+In under one minute of real time, it found the original seed, another
 seed that also produces the same mt_rand() output, and it searched the
 rest of the 32-bit seed space (not finding other matches).
 
-Intel AVX2 (no integer fused multiply-add, but 256- rather than 128-bit
-vectors) provides a slightly higher speed, on a Core i7-4770K CPU:
+Testing on a bigger machine (two E5-2670 v1 CPUs, using 128-bit AVX):
 
 $ time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 89667258 seeds per second 
+Found 0, trying 637534208 - 671088639, speed 233529013 seeds per second 
 seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 89811119 seeds per second 
+Found 1, trying 1207959552 - 1241513983, speed 235929600 seeds per second 
 seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 89808490 seeds per second 
+Found 2, trying 4261412864 - 4294967295, speed 237802057 seeds per second 
 Found 2
 
-real    0m47.826s
-user    6m19.100s
-sys     0m0.008s
+real	0m18.061s
+user	9m33.431s
+sys	0m0.007s
 
-Testing on a bigger machine (two E5-2670 CPUs, using 128-bit AVX):
-
-$ OMP_NUM_THREADS=16 time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 237885898 seeds per second 
-seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 238256321 seeds per second 
-seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 238200830 seeds per second 
-Found 2
-287.87user 0.00system 0:18.03elapsed 1596%CPU (0avgtext+0avgdata 3296maxresident)k
-
-Somehow 32 threads (to match the logical CPU count) results in a lower
-speed with this specific build on this specific machine; YMMV.
-
-Matching of multiple outputs, including inexact:
+Matching of multiple outputs:
 
 $ php5 -r 'mt_srand(1234567890); for ($i = 0; $i < 10; $i++) { echo mt_rand(0, 9), " "; } echo "\n";'
 6 6 4 1 1 2 8 4 5 8
 
 On the same machine as above:
 
-$ OMP_NUM_THREADS=16 time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
-Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
-Found 0, trying 1207959552 - 1241513983, speed 205435297 seeds per second 
+$ time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  8 8 0 9  4 4 0 9  5 5 0 9  8 8 0 9
+Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10
+Found 0, trying 1207959552 - 1241513983, speed 218833252 seeds per second 
 seed = 1234567890
-Found 1, trying 1409286144 - 1442840575, speed 205435297 seeds per second 
+Found 1, trying 4261412864 - 4294967295, speed 221372096 seeds per second 
+Found 1
+
+real	0m19.405s
+user	10m15.530s
+sys	0m0.021s
+
+Matching inexact outputs, if we had some uncertainty about the numbers:
+
+$ time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
+Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
+Found 0, trying 1207959552 - 1241513983, speed 214939422 seeds per second 
+seed = 1234567890
+Found 1, trying 1409286144 - 1442840575, speed 216148181 seeds per second 
 seed = 1414163717
-Found 2, trying 1879048192 - 1912602623, speed 205585141 seeds per second 
+Found 2, trying 1879048192 - 1912602623, speed 217482429 seeds per second 
 seed = 1893625793
-Found 3, trying 2785017856 - 2818572287, speed 205536373 seeds per second 
+Found 3, trying 2785017856 - 2818572287, speed 219120208 seeds per second 
 seed = 2804485451
-Found 4, trying 3791650816 - 3825205247, speed 205509529 seeds per second 
+Found 4, trying 3791650816 - 3825205247, speed 219933341 seeds per second 
 seed = 3810276440
-Found 5, trying 4261412864 - 4294967295, speed 205567431 seeds per second 
+Found 5, trying 4261412864 - 4294967295, speed 220228054 seeds per second 
 Found 5
-333.60user 0.00system 0:20.90elapsed 1596%CPU (0avgtext+0avgdata 3472maxresident)k
+
+real	0m19.503s
+user	10m14.207s
+sys	0m0.019s
 
 Notice how "7 8 0 9" specifies a range of possible values (7 to 8), and
 "0 0 0 0" means to skip (ignore) this one mt_rand() output value.  In
@@ -105,7 +114,7 @@ real    0m 7.60s
 user    28m 45.01s
 sys     0m 3.78s
 
-This is on a Xeon Phi 5110P, running 240 threads (as it should).
+This is on a Xeon Phi 5110P.
 
 Advanced invocation modes work too, but the performance impact of the
 non-vectorized portions of code is higher than on regular CPUs:
@@ -171,6 +180,6 @@ to be around 10% worse.
 
 All of the above benchmarks are on CPUs running at stock clocks, with
 turbo boost and HT enabled (where applicable).  Compiler versions vary
-(gcc 4.6.x to 7.1.1; icc 14.0.0 and 17.0.4), and so do Linux
+(gcc 4.4.7 to 7.1.1; icc 14.0.0 and 17.0.4), and so do Linux
 distributions and kernel versions (which affects how threads are
 scheduled across the logical CPUs).  And yes, all of these are on Linux.
