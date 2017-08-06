@@ -283,7 +283,12 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #endif
 
 		{
+#ifdef __AVX2__
+/* Amount of unrolling tuned for Haswell */
+			unsigned int n = (M - 1) / (6 * 2);
+#else
 			unsigned int n = (M - 1) / (6 * 6);
+#endif
 			vtype vi = _mm_add_epi32(v1, v1);
 
 #define DO(x, x1) \
@@ -310,8 +315,10 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		DO(aM, vi1) DO(bM, vi1) DO(cM, vi1) DO(dM, vi1) \
 		DO(eM, vi1) DO(fM, vi1) DO(gM, vi1) DO(hM, vi1)
 				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
+#ifndef __AVX2__
 				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
 				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
+#endif
 #undef DO_ALL
 #undef DO
 			} while (--n);
