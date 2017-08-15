@@ -124,6 +124,9 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 	unsigned int i = 1;
 
 	while (1) {
+		if (match->flags & MATCH_SKIP) {
+			/* nothing */
+		} else
 		if (match->flags & MATCH_PURE) {
 			if (x != match->mmin)
 				break;
@@ -146,18 +149,19 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 		if (i == 1)
 			NEXT_STATE(xsi, 1)
 #endif
-		x = xsi;
-		NEXT_STATE(xsi, i + 1)
-		NEXT_STATE(xs, M + i)
-		i++;
+		do {
+			x = xsi;
+			NEXT_STATE(xsi, i + 1)
+			NEXT_STATE(xs, M + i)
+			i++;
+		} while ((++match)->flags & MATCH_SKIP);
+
 		x = (((x & 0x80000000) | (xsi & 0x7fffffff)) >> 1) ^ xs ^
 		    ((x & 1) ? 0x9908b0df : 0);
 		x ^= (x >> 11);
 		x ^= (x << 7) & 0x9d2c5680;
 		x ^= (x << 15) & 0xefc60000;
 		x = (x ^ (x >> 18)) >> 1;
-
-		match++;
 	}
 
 	return -1;
@@ -324,6 +328,19 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			} while (--n);
 		}
 
+		if (match->flags & MATCH_SKIP) {
+			/* These values are unused */
+			a = aM;
+			b = bM;
+			c = cM;
+			d = dM;
+			e = eM;
+			f = fM;
+			g = gM;
+			h = hM;
+			goto skip;
+		}
+
 #define DO(x, x1, xM) \
 	x = _mm_xor_si128(xM, _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000, \
 	    _mm_and_si128(x1, c0x7fffffff)), 1));
@@ -421,6 +438,8 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		}
 #endif
 
+skip:
+
 		{
 			unsigned int i;
 			uint32_t iseed;
@@ -509,42 +528,47 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #undef DO
 			}
 
+			if (match->flags & MATCH_SKIP) {
+				/* These values are unused */
+				a = b = c = d = 0;
+			} else {
 #define DO(x, x1, xM) \
 	x = ((seed_and_0x80000000 | (x1 & 0x7fffffff)) >> 1) ^ xM;
-			DO(a, a1, aM)
-			DO(b, b1, bM)
-			DO(c, c1, cM)
-			DO(d, d1, dM)
+				DO(a, a1, aM)
+				DO(b, b1, bM)
+				DO(c, c1, cM)
+				DO(d, d1, dM)
 #undef DO
 
-			b ^= 0x9908b0df;
-			d ^= 0x9908b0df;
+				b ^= 0x9908b0df;
+				d ^= 0x9908b0df;
 
 #define DO(x) \
 	x ^= x >> 11;
-			DO(a)
-			DO(b)
-			DO(c)
-			DO(d)
+				DO(a)
+				DO(b)
+				DO(c)
+				DO(d)
 #undef DO
 #define DO(x, s, c) \
 	x ^= (x << s) & c;
-			DO(a, 7, 0x9d2c5680)
-			DO(b, 7, 0x9d2c5680)
-			DO(c, 7, 0x9d2c5680)
-			DO(d, 7, 0x9d2c5680)
-			DO(a, 15, 0xefc60000)
-			DO(b, 15, 0xefc60000)
-			DO(c, 15, 0xefc60000)
-			DO(d, 15, 0xefc60000)
+				DO(a, 7, 0x9d2c5680)
+				DO(b, 7, 0x9d2c5680)
+				DO(c, 7, 0x9d2c5680)
+				DO(d, 7, 0x9d2c5680)
+				DO(a, 15, 0xefc60000)
+				DO(b, 15, 0xefc60000)
+				DO(c, 15, 0xefc60000)
+				DO(d, 15, 0xefc60000)
 #undef DO
 #define DO(x) \
 	x = (x ^ (x >> 18)) >> 1;
-			DO(a)
-			DO(b)
-			DO(c)
-			DO(d)
+				DO(a)
+				DO(b)
+				DO(c)
+				DO(d)
 #undef DO
+			}
 
 			COMPARE(a, a1, aM, seed)
 			COMPARE(b, b1, bM, seed + 1)
