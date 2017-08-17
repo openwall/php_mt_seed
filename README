@@ -183,3 +183,8 @@ turbo boost and HT enabled (where applicable).  Compiler versions vary
 (gcc 4.4.7 to 7.1.1; icc 14.0.0 and 17.0.4), and so do Linux
 distributions and kernel versions (which affects how threads are
 scheduled across the logical CPUs).  And yes, all of these are on Linux.
+
+The above benchmarks are of php_mt_seed 3.3.  Results should be the same
+and speeds similar for php_mt_seed 3.4, except that it should be
+slightly faster at skipping (ignoring) mt_rand() outputs (as requested
+with "0 0 0 0" in some of the examples).
