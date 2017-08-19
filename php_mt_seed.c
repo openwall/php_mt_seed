@@ -165,12 +165,12 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 
 		x = (((x & 0x80000000) | (xsi & 0x7fffffff)) >> 1) ^ xs ^
 		    ((((version == PHP_521) ? x : xsi) & 1) * 0x9908b0df);
-		x ^= (x >> 11);
+		x ^= x >> 11;
 		x ^= (x << 7) & 0x9d2c5680;
 		x ^= (x << 15) & 0xefc60000;
-		x = x ^ (x >> 18);
+		x ^= x >> 18;
 
-		if (match->flags & (MATCH_PURE | MATCH_FULL))
+		if (match->flags & MATCH_FULL)
 			x >>= 1;
 	}
 
@@ -215,7 +215,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	unsigned int found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
 #if defined(__SSE4_1__) || defined(__MIC__)
-	vtype vvalue;
+	vtype vvalue = _mm_set1_epi32(match->mmin);
 #endif
 #if defined(__SSE2__) || defined(__MIC__)
 	vtype seed_and_0x80000000, seed_shr_30;
@@ -224,13 +224,6 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #endif
 
 	assert((start >> (30 - P)) == ((end - 1) >> (30 - P)));
-
-#if defined(__SSE4_1__) || defined(__MIC__)
-	if (match->flags & MATCH_PURE)
-		vvalue = _mm_set1_epi32(match->mmin);
-#endif
-#if defined(__SSE2__) || defined(__MIC__)
-#endif
 
 	{
 		uint32_t seed = (uint32_t)start << P;
@@ -257,6 +250,15 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	for (base = start; base < end; base++) {
 		uint32_t seed = (uint32_t)base << P;
 #if defined(__SSE2__) || defined(__MIC__)
+		typedef struct {
+			vtype a, b, c, d, e, f, g, h;
+		} atype;
+		atype xM, x = {};
+#if defined(__AVX2__) || (__GNUC__ == 5 && __GNUC_MINOR__ < 4)
+		/* Hint to compiler not to waste registers on x1 and x710 */
+		volatile
+#endif
+		atype x1, x710 = {};
 		const vtype cmul = _mm_set1_epi32(1812433253U);
 		const vtype cone = _mm_set1_epi32(1);
 		const vtype c0x7fffffff = _mm_set1_epi32(0x7fffffff);
@@ -264,422 +266,319 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		const vtype c0xefc60000 = _mm_set1_epi32(0xefc60000);
 		const vtype c0x9908b0df = _mm_set1_epi32(0x9908b0df);
 		vtype vseed = _mm_set1_epi32(seed);
-		vtype a, b, c, d, e, f, g, h;
-		vtype a1, b1, c1, d1, e1, f1, g1, h1;
-		vtype aM, bM, cM, dM, eM, fM, gM, hM;
-		vtype save[8];
 		version_t version;
 
 #if defined(__MIC__) || defined(__AVX512F__)
-		aM = _mm512_add_epi32(vseed, _mm512_set_epi32(
+		xM.a = _mm512_add_epi32(vseed, _mm512_set_epi32(
 		    0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30));
-		bM = _mm512_add_epi32(aM, _mm512_set1_epi32(1));
-		cM = _mm512_add_epi32(aM, _mm512_set1_epi32(32));
-		dM = _mm512_add_epi32(aM, _mm512_set1_epi32(33));
-		eM = _mm512_add_epi32(aM, _mm512_set1_epi32(64));
-		fM = _mm512_add_epi32(aM, _mm512_set1_epi32(65));
-		gM = _mm512_add_epi32(aM, _mm512_set1_epi32(96));
-		hM = _mm512_add_epi32(aM, _mm512_set1_epi32(97));
+		xM.b = _mm512_add_epi32(xM.a, _mm512_set1_epi32(1));
+		xM.c = _mm512_add_epi32(xM.a, _mm512_set1_epi32(32));
+		xM.d = _mm512_add_epi32(xM.a, _mm512_set1_epi32(33));
+		xM.e = _mm512_add_epi32(xM.a, _mm512_set1_epi32(64));
+		xM.f = _mm512_add_epi32(xM.a, _mm512_set1_epi32(65));
+		xM.g = _mm512_add_epi32(xM.a, _mm512_set1_epi32(96));
+		xM.h = _mm512_add_epi32(xM.a, _mm512_set1_epi32(97));
 #elif defined(__AVX2__)
-		aM = _mm256_add_epi32(vseed, _mm256_set_epi32(
+		xM.a = _mm256_add_epi32(vseed, _mm256_set_epi32(
 		    0, 2, 4, 6, 8, 10, 12, 14));
-		bM = _mm256_add_epi32(aM, _mm256_set1_epi32(1));
-		cM = _mm256_add_epi32(aM, _mm256_set1_epi32(16));
-		dM = _mm256_add_epi32(aM, _mm256_set1_epi32(17));
-		eM = _mm256_add_epi32(aM, _mm256_set1_epi32(32));
-		fM = _mm256_add_epi32(aM, _mm256_set1_epi32(33));
-		gM = _mm256_add_epi32(aM, _mm256_set1_epi32(48));
-		hM = _mm256_add_epi32(aM, _mm256_set1_epi32(49));
+		xM.b = _mm256_add_epi32(xM.a, _mm256_set1_epi32(1));
+		xM.c = _mm256_add_epi32(xM.a, _mm256_set1_epi32(16));
+		xM.d = _mm256_add_epi32(xM.a, _mm256_set1_epi32(17));
+		xM.e = _mm256_add_epi32(xM.a, _mm256_set1_epi32(32));
+		xM.f = _mm256_add_epi32(xM.a, _mm256_set1_epi32(33));
+		xM.g = _mm256_add_epi32(xM.a, _mm256_set1_epi32(48));
+		xM.h = _mm256_add_epi32(xM.a, _mm256_set1_epi32(49));
 #else
-		aM = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
-		bM = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
-		cM = _mm_add_epi32(vseed, _mm_set_epi32(8, 10, 12, 14));
-		dM = _mm_add_epi32(vseed, _mm_set_epi32(9, 11, 13, 15));
-		eM = _mm_add_epi32(vseed, _mm_set_epi32(16, 18, 20, 22));
-		fM = _mm_add_epi32(vseed, _mm_set_epi32(17, 19, 21, 23));
-		gM = _mm_add_epi32(vseed, _mm_set_epi32(24, 26, 28, 30));
-		hM = _mm_add_epi32(vseed, _mm_set_epi32(25, 27, 29, 31));
+		xM.a = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
+		xM.b = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
+		xM.c = _mm_add_epi32(vseed, _mm_set_epi32(8, 10, 12, 14));
+		xM.d = _mm_add_epi32(vseed, _mm_set_epi32(9, 11, 13, 15));
+		xM.e = _mm_add_epi32(vseed, _mm_set_epi32(16, 18, 20, 22));
+		xM.f = _mm_add_epi32(vseed, _mm_set_epi32(17, 19, 21, 23));
+		xM.g = _mm_add_epi32(vseed, _mm_set_epi32(24, 26, 28, 30));
+		xM.h = _mm_add_epi32(vseed, _mm_set_epi32(25, 27, 29, 31));
 #endif
+
+#define DO_ALL \
+	DO(x.a, x1.a, xM.a) \
+	DO(x.b, x1.b, xM.b) \
+	DO(x.c, x1.c, xM.c) \
+	DO(x.d, x1.d, xM.d) \
+	DO(x.e, x1.e, xM.e) \
+	DO(x.f, x1.f, xM.f) \
+	DO(x.g, x1.g, xM.g) \
+	DO(x.h, x1.h, xM.h)
 
 		{
-#ifdef __AVX2__
-/* Amount of unrolling tuned for Haswell */
-			unsigned int n = (M - 1) / (6 * 2);
-#else
-			unsigned int n = (M - 1) / (6 * 6);
-#endif
+			unsigned int n = (M - 1) / 22;
 			vtype vi = _mm_add_epi32(cone, cone);
 
-#define DO(x, x1) \
-	x = x1 = _mm_macc_epi32(cmul, _mm_xor_si128(x, seed_shr_30), cone);
-			DO(aM, a1)
-			DO(bM, b1)
-			DO(cM, c1)
-			DO(dM, d1)
-			DO(eM, e1)
-			DO(fM, f1)
-			DO(gM, g1)
-			DO(hM, h1)
+#define DO(x, x1, xM) \
+	x1 = xM = _mm_macc_epi32(cmul, _mm_xor_si128(xM, seed_shr_30), cone);
+			DO_ALL
 #undef DO
 
 			do {
-				vtype vi1;
-#define DO(x, vi) \
-	x = _mm_macc_epi32(cmul, _mm_xor_si128(x, _mm_srli_epi32(x, 30)), vi);
-#define DO_ALL \
-	vi1 = _mm_add_epi32(vi, cone); \
-	DO(aM, vi) DO(bM, vi) DO(cM, vi) DO(dM, vi) \
-	DO(eM, vi) DO(fM, vi) DO(gM, vi) DO(hM, vi) \
-	vi = _mm_add_epi32(vi1, cone); \
-	DO(aM, vi1) DO(bM, vi1) DO(cM, vi1) DO(dM, vi1) \
-	DO(eM, vi1) DO(fM, vi1) DO(gM, vi1) DO(hM, vi1)
-				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
-#ifndef __AVX2__
-				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
-				DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL DO_ALL
-#endif
-#undef DO_ALL
+#define DO(x, x1, xM) \
+	xM = _mm_macc_epi32(cmul, _mm_xor_si128(xM, _mm_srli_epi32(xM, 30)), vi);
+#define DO_ALLI \
+	DO_ALL \
+	vi = _mm_add_epi32(vi, cone);
+				DO_ALLI DO_ALLI DO_ALLI DO_ALLI DO_ALLI DO_ALLI
+				DO_ALLI DO_ALLI DO_ALLI DO_ALLI DO_ALLI DO_ALLI
+				DO_ALLI DO_ALLI DO_ALLI DO_ALLI DO_ALLI DO_ALLI
+				DO_ALLI DO_ALLI DO_ALLI DO_ALLI
+#undef DO_ALLI
 #undef DO
 			} while (--n);
 		}
 
-		version = PHP_521;
-
-		if (match->flags & MATCH_SKIP) {
-			/* These values are unused */
-			save[0] = a = aM;
-			save[1] = b = bM;
-			save[2] = c = cM;
-			save[3] = d = dM;
-			save[4] = e = eM;
-			save[5] = f = fM;
-			save[6] = g = gM;
-			save[7] = h = hM;
-			goto skip;
-		}
-
+		if (!(match->flags & MATCH_SKIP)) {
 #define DO(x, x1, xM) \
 	x = _mm_xor_si128(xM, _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000, \
 	    _mm_and_si128(x1, c0x7fffffff)), 1));
-		DO(a, a1, aM)
-		DO(b, b1, bM)
-		DO(c, c1, cM)
-		DO(d, d1, dM)
-		DO(e, e1, eM)
-		DO(f, f1, fM)
-		DO(g, g1, gM)
-		DO(h, h1, hM)
+			DO_ALL
 #undef DO
 
-		save[0] = a;
-		save[1] = b;
-		save[2] = c;
-		save[3] = d;
-		save[4] = e;
-		save[5] = f;
-		save[6] = g;
-		save[7] = h;
+#define DO(xout, xin, x1) \
+	xout = _mm_xor_si128(xin, _mm_mullo_epi32(c0x9908b0df, \
+	    _mm_and_si128(x1, cone)));
+			DO(x710.a, x.a, x1.a)
+			DO(x710.b, x.b, x1.b)
+			DO(x710.c, x.c, x1.c)
+			DO(x710.d, x.d, x1.d)
+			DO(x710.e, x.e, x1.e)
+			DO(x710.f, x.f, x1.f)
+			DO(x710.g, x.g, x1.g)
+			DO(x710.h, x.h, x1.h)
+#undef DO
 
 #define DO(x) \
 	x = _mm_xor_si128(x, c0x9908b0df);
-		DO(b)
-		DO(d)
-		DO(f)
-		DO(h)
-#undef DO
-
-again:
-
-#define DO(x) \
-	x = _mm_xor_si128(x, _mm_srli_epi32(x, 11));
-		DO(a)
-		DO(b)
-		DO(c)
-		DO(d)
-		DO(e)
-		DO(f)
-		DO(g)
-		DO(h)
-#undef DO
-
-#define DO(x, s, c) \
-	x = _mm_xor_si128(x, _mm_and_si128(_mm_slli_epi32(x, s), c));
-		DO(a, 7, c0x9d2c5680)
-		DO(b, 7, c0x9d2c5680)
-		DO(c, 7, c0x9d2c5680)
-		DO(d, 7, c0x9d2c5680)
-		DO(e, 7, c0x9d2c5680)
-		DO(f, 7, c0x9d2c5680)
-		DO(g, 7, c0x9d2c5680)
-		DO(h, 7, c0x9d2c5680)
-		DO(a, 15, c0xefc60000)
-		DO(b, 15, c0xefc60000)
-		DO(c, 15, c0xefc60000)
-		DO(d, 15, c0xefc60000)
-		DO(e, 15, c0xefc60000)
-		DO(f, 15, c0xefc60000)
-		DO(g, 15, c0xefc60000)
-		DO(h, 15, c0xefc60000)
-#undef DO
-
-#define DO(x) \
-	x = _mm_xor_si128(x, _mm_srli_epi32(x, 18));
-		DO(a)
-		DO(b)
-		DO(c)
-		DO(d)
-		DO(e)
-		DO(f)
-		DO(g)
-		DO(h)
-#undef DO
-
-		if (match->flags & (MATCH_PURE | MATCH_FULL)) {
-#define DO(x) \
-	x = _mm_srli_epi32(x, 1);
-			DO(a)
-			DO(b)
-			DO(c)
-			DO(d)
-			DO(e)
-			DO(f)
-			DO(g)
-			DO(h)
+			DO(x.b)
+			DO(x.d)
+			DO(x.f)
+			DO(x.h)
 #undef DO
 		}
 
-#if defined(__SSE4_1__) || defined(__MIC__)
-		if (match->flags & MATCH_PURE) {
-#if defined(__MIC__) || defined(__AVX512F__)
-			if ((_mm512_cmpeq_epi32_mask(a, vvalue) |
-			    _mm512_cmpeq_epi32_mask(b, vvalue) |
-			    _mm512_cmpeq_epi32_mask(c, vvalue) |
-			    _mm512_cmpeq_epi32_mask(d, vvalue) |
-			    _mm512_cmpeq_epi32_mask(e, vvalue) |
-			    _mm512_cmpeq_epi32_mask(f, vvalue) |
-			    _mm512_cmpeq_epi32_mask(g, vvalue) |
-			    _mm512_cmpeq_epi32_mask(h, vvalue)) == 0)
-				goto next;
-#else
-			vtype amask = _mm_cmpeq_epi32(a, vvalue);
-			vtype bmask = _mm_cmpeq_epi32(b, vvalue);
-			vtype cmask = _mm_cmpeq_epi32(c, vvalue);
-			vtype dmask = _mm_cmpeq_epi32(d, vvalue);
-			vtype emask = _mm_cmpeq_epi32(e, vvalue);
-			vtype fmask = _mm_cmpeq_epi32(f, vvalue);
-			vtype gmask = _mm_cmpeq_epi32(g, vvalue);
-			vtype hmask = _mm_cmpeq_epi32(h, vvalue);
-			if (_mm_testz_si128(amask, amask) &&
-			    _mm_testz_si128(bmask, bmask) &&
-			    _mm_testz_si128(cmask, cmask) &&
-			    _mm_testz_si128(dmask, dmask) &&
-			    _mm_testz_si128(emask, emask) &&
-			    _mm_testz_si128(fmask, fmask) &&
-			    _mm_testz_si128(gmask, gmask) &&
-			    _mm_testz_si128(hmask, hmask))
-				goto next;
-#endif
-		}
-#endif
-
-skip:
-
-		{
-			unsigned int i;
-			uint32_t iseed;
-#ifdef __ICC
-			volatile
-#endif
-			union {
-				vtype v;
-				uint32_t s[sizeof(vtype) / 4];
-			} u[8], uM[8];
-			u[0].v = a;
-			u[1].v = b;
-			u[2].v = c;
-			u[3].v = d;
-			u[4].v = e;
-			u[5].v = f;
-			u[6].v = g;
-			u[7].v = h;
-			uM[0].v = aM;
-			uM[1].v = bM;
-			uM[2].v = cM;
-			uM[3].v = dM;
-			uM[4].v = eM;
-			uM[5].v = fM;
-			uM[6].v = gM;
-			uM[7].v = hM;
-#if defined(__MIC__) || defined(__AVX512F__)
-			for (i = 0, iseed = seed; i < 8; i++, iseed += 32) {
-				unsigned int j, k;
-				for (j = 0, k = 30; j < 16; j++, k -= 2) {
-					COMPARE(u[i].s[j], uM[i].s[j],
-					    iseed + k)
-				}
-				i++;
-				for (j = 0, k = 31; j < 16; j++, k -= 2) {
-					COMPARE(u[i].s[j], uM[i].s[j],
-					    iseed + k)
-				}
-			}
-#elif defined(__AVX2__)
-			for (i = 0, iseed = seed; i < 8; i++, iseed += 16) {
-				unsigned int j, k;
-				for (j = 0, k = 14; j < 8; j++, k -= 2) {
-					COMPARE(u[i].s[j], uM[i].s[j],
-					    iseed + k)
-				}
-				i++;
-				for (j = 0, k = 15; j < 8; j++, k -= 2) {
-					COMPARE(u[i].s[j], uM[i].s[j],
-					    iseed + k)
-				}
-			}
-#else
-			for (i = 0, iseed = seed; i < 8; i++, iseed += 8) {
-				COMPARE(u[i].s[0], uM[i].s[0], iseed + 6)
-				COMPARE(u[i].s[1], uM[i].s[1], iseed + 4)
-				COMPARE(u[i].s[2], uM[i].s[2], iseed + 2)
-				COMPARE(u[i].s[3], uM[i].s[3], iseed)
-				i++;
-				COMPARE(u[i].s[0], uM[i].s[0], iseed + 7)
-				COMPARE(u[i].s[1], uM[i].s[1], iseed + 5)
-				COMPARE(u[i].s[2], uM[i].s[2], iseed + 3)
-				COMPARE(u[i].s[3], uM[i].s[3], iseed + 1)
-			}
-#endif
-		}
-
-#if defined(__SSE4_1__) || defined(__MIC__)
-next:
-#endif
-		if (version == PHP_521) {
-			version = PHP_710;
-			a = save[0];
-			b = save[1];
-			c = save[2];
-			d = save[3];
-			e = save[4];
-			f = save[5];
-			g = save[6];
-			h = save[7];
-
-#define DO(x, x1) \
-	x = _mm_xor_si128(x, _mm_mullo_epi32(c0x9908b0df, \
-	    _mm_and_si128(x1, cone)));
-			DO(a, a1)
-			DO(b, b1)
-			DO(c, c1)
-			DO(d, d1)
-			DO(e, e1)
-			DO(f, f1)
-			DO(g, g1)
-			DO(h, h1)
-#undef DO
-
-			goto again;
-		}
-#else
+		version = PHP_521;
 		do {
-			uint32_t a, b, c, d, a1, b1, c1, d1, aM, bM, cM, dM;
-			uint32_t save[4];
+			uint32_t maybe = 1;
+
+			if (!(match->flags & MATCH_SKIP)) {
+#define DO(x, x1, xM) \
+	x = _mm_xor_si128(x, _mm_srli_epi32(x, 11));
+				DO_ALL
+#undef DO
+
+#define DO_SC(x, s, c) \
+	x = _mm_xor_si128(x, _mm_and_si128(_mm_slli_epi32(x, s), c));
+#define DO(x, x1, xM) \
+	DO_SC(x, 7, c0x9d2c5680)
+				DO_ALL
+#undef DO
+#define DO(x, x1, xM) \
+	DO_SC(x, 15, c0xefc60000)
+				DO_ALL
+#undef DO
+#undef DO_SC
+
+#define DO(x, x1, xM) \
+	x = _mm_xor_si128(x, _mm_srli_epi32(x, 18));
+				DO_ALL
+#undef DO
+
+				if (match->flags & MATCH_FULL) {
+#define DO(x, x1, xM) \
+	x = _mm_srli_epi32(x, 1);
+					DO_ALL
+#undef DO
+				}
+			}
+
+#if defined(__SSE4_1__) || defined(__MIC__)
+			if (match->flags & MATCH_PURE) {
+#if defined(__MIC__) || defined(__AVX512F__)
+				maybe = _mm512_cmpeq_epi32_mask(x.a, vvalue) |
+				    _mm512_cmpeq_epi32_mask(x.b, vvalue) |
+				    _mm512_cmpeq_epi32_mask(x.c, vvalue) |
+				    _mm512_cmpeq_epi32_mask(x.d, vvalue) |
+				    _mm512_cmpeq_epi32_mask(x.e, vvalue) |
+				    _mm512_cmpeq_epi32_mask(x.f, vvalue) |
+				    _mm512_cmpeq_epi32_mask(x.g, vvalue) |
+				    _mm512_cmpeq_epi32_mask(x.h, vvalue);
+#else
+				vtype amask = _mm_cmpeq_epi32(x.a, vvalue);
+				vtype bmask = _mm_cmpeq_epi32(x.b, vvalue);
+				vtype cmask = _mm_cmpeq_epi32(x.c, vvalue);
+				vtype dmask = _mm_cmpeq_epi32(x.d, vvalue);
+				vtype emask = _mm_cmpeq_epi32(x.e, vvalue);
+				vtype fmask = _mm_cmpeq_epi32(x.f, vvalue);
+				vtype gmask = _mm_cmpeq_epi32(x.g, vvalue);
+				vtype hmask = _mm_cmpeq_epi32(x.h, vvalue);
+				maybe = !(_mm_testz_si128(amask, amask) &&
+				    _mm_testz_si128(bmask, bmask) &&
+				    _mm_testz_si128(cmask, cmask) &&
+				    _mm_testz_si128(dmask, dmask) &&
+				    _mm_testz_si128(emask, emask) &&
+				    _mm_testz_si128(fmask, fmask) &&
+				    _mm_testz_si128(gmask, gmask) &&
+				    _mm_testz_si128(hmask, hmask));
+#endif
+			}
+#endif
+
+			if (maybe) {
+				unsigned int i;
+				uint32_t iseed;
+				union {
+					atype v;
+					uint32_t s[8][sizeof(vtype) / 4];
+				} u, uM;
+				u.v = x;
+				uM.v = xM;
+#if defined(__MIC__) || defined(__AVX512F__)
+				for (i = 0, iseed = seed; i < 8; i++, iseed += 32) {
+					unsigned int j, k;
+					for (j = 0, k = 30; j < 16; j++, k -= 2) {
+						COMPARE(u.s[i][j], uM.s[i][j],
+						    iseed + k)
+					}
+					i++;
+					for (j = 0, k = 31; j < 16; j++, k -= 2) {
+						COMPARE(u.s[i][j], uM.s[i][j],
+						    iseed + k)
+					}
+				}
+#elif defined(__AVX2__)
+				for (i = 0, iseed = seed; i < 8; i++, iseed += 16) {
+					unsigned int j, k;
+					for (j = 0, k = 14; j < 8; j++, k -= 2) {
+						COMPARE(u.s[i][j], uM.s[i][j],
+						    iseed + k)
+					}
+					i++;
+					for (j = 0, k = 15; j < 8; j++, k -= 2) {
+						COMPARE(u.s[i][j], uM.s[i][j],
+						    iseed + k)
+					}
+				}
+#else
+				for (i = 0, iseed = seed; i < 8; i++, iseed += 8) {
+					COMPARE(u.s[i][0], uM.s[i][0], iseed + 6)
+					COMPARE(u.s[i][1], uM.s[i][1], iseed + 4)
+					COMPARE(u.s[i][2], uM.s[i][2], iseed + 2)
+					COMPARE(u.s[i][3], uM.s[i][3], iseed)
+					i++;
+					COMPARE(u.s[i][0], uM.s[i][0], iseed + 7)
+					COMPARE(u.s[i][1], uM.s[i][1], iseed + 5)
+					COMPARE(u.s[i][2], uM.s[i][2], iseed + 3)
+					COMPARE(u.s[i][3], uM.s[i][3], iseed + 1)
+				}
+#endif
+			}
+
+			if (version == PHP_710)
+				break;
+			version = PHP_710;
+			x = x710;
+		} while (1);
+#else
+		typedef struct {
+			uint32_t a, b, c, d;
+		} atype;
+		atype x = {}, x710 = {};
+		do {
+			atype x1, xM;
 			version_t version;
 			unsigned int i;
 
-#define DO(x, x1, seed) \
-	x = x1 = 1812433253U * ((seed) ^ seed_shr_30) + 1;
-			DO(aM, a1, seed)
-			DO(bM, b1, seed + 1)
-			DO(cM, c1, seed + 2)
-			DO(dM, d1, seed + 3)
+			xM.a = seed;
+			xM.b = seed + 1;
+			xM.c = seed + 2;
+			xM.d = seed + 3;
+
+#define DO_ALL \
+	DO(x.a, x1.a, xM.a) \
+	DO(x.b, x1.b, xM.b) \
+	DO(x.c, x1.c, xM.c) \
+	DO(x.d, x1.d, xM.d)
+
+#define DO(x, x1, xM) \
+	x1 = xM = 1812433253U * (xM ^ seed_shr_30) + 1;
+			DO_ALL
 #undef DO
+
 			for (i = 2; i <= M; i++) {
-#define DO(x) \
-	NEXT_STATE(x, i)
-				DO(aM)
-				DO(bM)
-				DO(cM)
-				DO(dM)
+#define DO(x, x1, xM) \
+	NEXT_STATE(xM, i)
+				DO_ALL
 #undef DO
+			}
+
+			if (!(match->flags & MATCH_SKIP)) {
+#define DO(x, x1, xM) \
+	x = ((seed_and_0x80000000 | (x1 & 0x7fffffff)) >> 1) ^ xM;
+				DO_ALL
+#undef DO
+
+#define DO(xout, xin, x1) \
+	xout = xin ^ ((x1 & 1) * 0x9908b0df);
+				DO(x710.a, x.a, x1.a)
+				DO(x710.b, x.b, x1.b)
+				DO(x710.c, x.c, x1.c)
+				DO(x710.d, x.d, x1.d)
+#undef DO
+
+				x.b ^= 0x9908b0df;
+				x.d ^= 0x9908b0df;
 			}
 
 			version = PHP_521;
-
-			if (match->flags & MATCH_SKIP) {
-				/* These values are unused */
-				save[0] = a = 0;
-				save[1] = b = 0;
-				save[2] = c = 0;
-				save[3] = d = 0;
-			} else {
+			do {
+				if (!(match->flags & MATCH_SKIP)) {
 #define DO(x, x1, xM) \
-	x = ((seed_and_0x80000000 | (x1 & 0x7fffffff)) >> 1) ^ xM;
-				DO(a, a1, aM)
-				DO(b, b1, bM)
-				DO(c, c1, cM)
-				DO(d, d1, dM)
-#undef DO
-
-				save[0] = a;
-				save[1] = b;
-				save[2] = c;
-				save[3] = d;
-
-				b ^= 0x9908b0df;
-				d ^= 0x9908b0df;
-
-again:
-
-#define DO(x) \
 	x ^= x >> 11;
-				DO(a)
-				DO(b)
-				DO(c)
-				DO(d)
+					DO_ALL
 #undef DO
-#define DO(x, s, c) \
+
+#define DO_SC(x, s, c) \
 	x ^= (x << s) & c;
-				DO(a, 7, 0x9d2c5680)
-				DO(b, 7, 0x9d2c5680)
-				DO(c, 7, 0x9d2c5680)
-				DO(d, 7, 0x9d2c5680)
-				DO(a, 15, 0xefc60000)
-				DO(b, 15, 0xefc60000)
-				DO(c, 15, 0xefc60000)
-				DO(d, 15, 0xefc60000)
+#define DO(x, x1, xM) \
+	DO_SC(x, 7, 0x9d2c5680)
+					DO_ALL
 #undef DO
-#define DO(x) \
-	x = (x ^ (x >> 18)) >> 1;
-				DO(a)
-				DO(b)
-				DO(c)
-				DO(d)
+#define DO(x, x1, xM) \
+	DO_SC(x, 15, 0xefc60000)
+					DO_ALL
 #undef DO
-			}
+#undef DO_SC
+#undef DO
 
-			COMPARE(a, a1, aM, seed)
-			COMPARE(b, b1, bM, seed + 1)
-			COMPARE(c, c1, cM, seed + 2)
-			COMPARE(d, d1, dM, seed + 3)
+#define DO(x, x1, xM) \
+	x ^= x >> 18;
+					DO_ALL
+#undef DO
 
-			if (version == PHP_521) {
+					if (match->flags & MATCH_FULL) {
+#define DO(x, x1, xM) \
+	x >>= 1;
+						DO_ALL
+#undef DO
+					}
+				}
+
+				COMPARE(x.a, x1.a, xM.a, seed)
+				COMPARE(x.b, x1.b, xM.b, seed + 1)
+				COMPARE(x.c, x1.c, xM.c, seed + 2)
+				COMPARE(x.d, x1.d, xM.d, seed + 3)
+
+				if (version == PHP_710)
+					break;
 				version = PHP_710;
-				a = save[0];
-				b = save[1];
-				c = save[2];
-				d = save[3];
-
-#define DO(x, x1) \
-	x ^= (x1 & 1) * 0x9908b0df;
-				DO(a, a1)
-				DO(b, b1)
-				DO(c, c1)
-				DO(d, d1)
-#undef DO
-
-				goto again;
-			}
+				x = x710;
+			} while (1);
 
 			seed += 4;
 		} while (seed & ((1 << P) - 1));
@@ -715,11 +614,6 @@ static unsigned int crack(const match_t *match)
 		    (running_time ? running_time : 1));
 
 		found += crack_range(base, base + step, match);
-
-#if 0
-		if (found)
-			break;
-#endif
 	}
 
 	return found;
