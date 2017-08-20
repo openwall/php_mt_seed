@@ -213,8 +213,9 @@ static void print_guess(uint32_t seed, uint64_t *found, version_t version)
 #pragma omp critical
 #endif
 	do {
-		printf("%sseed = 0x%08x = %u (PHP %s)\n",
-		    *found ? "" : "\n",
+		if (!*found)
+		    putc('\n', stderr);
+		printf("seed = 0x%08x = %u (PHP %s)\n",
 		    seed, seed, versions[version]);
 		(*found)++;
 	} while (version == PHP_LEGACY && !(seed++ & 1));
@@ -634,7 +635,7 @@ static uint64_t crack(const match_t *match)
 	do {
 		unsigned int shift = (flavor == PHP_LEGACY);
 
-		printf("Version: %s\n", flavors[flavor]);
+		fprintf(stderr, "Version: %s\n", flavors[flavor]);
 
 		clk_tck = sysconf(_SC_CLK_TCK);
 		start_time = times(&tms);
@@ -659,7 +660,7 @@ static uint64_t crack(const match_t *match)
 			break;
 		flavor = PHP_MODERN;
 		if (!recent)
-			putchar('\n');
+			putc('\n', stderr);
 	} while (1);
 
 	return found;
