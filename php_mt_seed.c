@@ -284,11 +284,8 @@ static uint64_t crack_range(int32_t start, int32_t end,
 			vtype a, b, c, d, e, f, g, h;
 		} atype;
 		atype xM, x = {}, x710 = {};
-#ifdef __AVX2__
-		/* Hint to compiler not to waste registers on x1 */
-		volatile
-#endif
-		atype x1;
+		/* Hint to compiler not to waste registers */
+		volatile atype x1;
 		const vtype cone = _mm_set1_epi32(1);
 		vtype vseed = _mm_set1_epi32(seed);
 		version_t version;
@@ -463,10 +460,13 @@ static uint64_t crack_range(int32_t start, int32_t end,
 			if (maybe) {
 				unsigned int i;
 				uint32_t iseed;
-				union {
+				typedef union {
 					atype v;
 					uint32_t s[8][sizeof(vtype) / 4];
-				} u, uM;
+				} utype;
+				utype u;
+				/* Hint to compiler not to waste registers */
+				volatile utype uM;
 				u.v = x;
 				uM.v = xM;
 #if defined(__MIC__) || defined(__AVX512F__)
@@ -508,6 +508,8 @@ static uint64_t crack_range(int32_t start, int32_t end,
 					COMPARE(u.s[i][3], uM.s[i][3], iseed + 1)
 				}
 #endif
+				/* Hint to compiler not to spill xM above */
+				xM = uM.v;
 			}
 
 			if (version != PHP_521)
