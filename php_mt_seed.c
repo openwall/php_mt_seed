@@ -106,9 +106,22 @@ typedef struct {
 } match_t;
 
 typedef enum {
-	PHP_521,
-	PHP_710
+	PHP_LEGACY = 0,
+	PHP_MODERN = 1,
+	PHP_521 = 1,
+	PHP_710 = 2
 } version_t;
+
+static const char *flavors[] = {
+	"3.0.7 to 5.2.0",
+	"5.2.1+"
+};
+
+static const char *versions[] = {
+	"3.0.7 to 5.2.0",
+	"5.2.1 to 7.0.x; HHVM",
+	"7.1.0+"
+};
 
 #define NEXT_STATE(x, i) \
 	(x) = 1812433253U * ((x) ^ ((x) >> 30)) + (i);
@@ -139,7 +152,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 			int32_t xr;
 			if (match->flags & MATCH_FULL)
 				xr = x;
-			else if (version == PHP_521)
+			else if (version != PHP_710)
 				xr = match->rmin +
 				    (int32_t)((double)match->rspan * (x >> 1) /
 				    (0x7fffffff + 1.0));
@@ -152,16 +165,30 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 		if (match->flags & MATCH_LAST)
 			return 0;
 
+		if (version == PHP_LEGACY) {
 #if defined(__SSE2__) || defined(__MIC__)
-		if (i == 1)
-			NEXT_STATE(xsi, 1)
+			if (i == 1) {
+				xsi = (69069 * 2) * xsi + 69069;
+				i = 0;
+			}
 #endif
-		do {
-			x = xsi;
-			NEXT_STATE(xsi, i + 1)
-			NEXT_STATE(xs, M + i)
-			i++;
-		} while ((++match)->flags & MATCH_SKIP);
+			do {
+				x = xsi;
+				xsi *= 69069;
+				xs *= 69069;
+			} while ((++match)->flags & MATCH_SKIP);
+		} else {
+#if defined(__SSE2__) || defined(__MIC__)
+			if (i == 1)
+				NEXT_STATE(xsi, 1)
+#endif
+			do {
+				x = xsi;
+				NEXT_STATE(xsi, i + 1)
+				NEXT_STATE(xs, M + i)
+				i++;
+			} while ((++match)->flags & MATCH_SKIP);
+		}
 
 		x = (((x & 0x80000000) | (xsi & 0x7fffffff)) >> 1) ^ xs ^
 		    ((((version == PHP_521) ? x : xsi) & 1) * 0x9908b0df);
@@ -179,16 +206,18 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 
 static void print_guess(uint32_t seed, unsigned int *found, version_t version)
 {
+	if (version == PHP_LEGACY)
+		seed <<= 1;
+
 #ifdef _OPENMP
 #pragma omp critical
 #endif
-	{
-		printf("%sseed = %u (PHP %s)\n", *found ? "" : "\n", seed,
-		    (version == PHP_521) ?
-		    "5.2.1 to 7.0.x or 7.1.0+ with MT_RAND_PHP or HHVM" :
-		    "7.1.0+ without MT_RAND_PHP");
+	do {
+		printf("%sseed = 0x%08x = %u (PHP %s)\n",
+		    *found ? "" : "\n",
+		    seed, seed, versions[version]);
 		(*found)++;
-	}
+	} while (version == PHP_LEGACY && !(seed++ & 1));
 }
 
 #if defined(__SSE2__) || defined(__MIC__)
@@ -210,7 +239,7 @@ static void print_guess(uint32_t seed, unsigned int *found, version_t version)
 #endif
 
 static unsigned int crack_range(int32_t start, int32_t end,
-    const match_t *match)
+    const match_t *match, version_t flavor)
 {
 	unsigned int found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
@@ -226,7 +255,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	assert((start >> (30 - P)) == ((end - 1) >> (30 - P)));
 
 	{
-		uint32_t seed = (uint32_t)start << P;
+		uint32_t seed = (uint32_t)start << (P + (flavor == PHP_LEGACY));
 #if defined(__SSE2__) || defined(__MIC__)
 		vtype vseed = _mm_set1_epi32(seed);
 		const vtype c0x80000000 = _mm_set1_epi32(0x80000000);
@@ -240,11 +269,11 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 #ifdef _OPENMP
 #if defined(__SSE4_1__) || defined(__MIC__)
-#pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30, vvalue)
+#pragma omp parallel for default(none) private(base) shared(match, flavor, start, end, found, seed_and_0x80000000, seed_shr_30, vvalue)
 #elif defined(__SSE2__)
-#pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30)
+#pragma omp parallel for default(none) private(base) shared(match, flavor, start, end, found, seed_and_0x80000000, seed_shr_30)
 #else
-#pragma omp parallel for default(none) private(base) shared(match, start, end, found, seed_and_0x80000000, seed_shr_30)
+#pragma omp parallel for default(none) private(base) shared(match, flavor, start, end, found, seed_and_0x80000000, seed_shr_30)
 #endif
 #endif
 	for (base = start; base < end; base++) {
@@ -253,12 +282,12 @@ static unsigned int crack_range(int32_t start, int32_t end,
 		typedef struct {
 			vtype a, b, c, d, e, f, g, h;
 		} atype;
-		atype xM, x = {};
-#if defined(__AVX2__) || (__GNUC__ == 5 && __GNUC_MINOR__ < 4)
-		/* Hint to compiler not to waste registers on x1 and x710 */
+		atype xM, x = {}, x710 = {};
+#ifdef __AVX2__
+		/* Hint to compiler not to waste registers on x1 */
 		volatile
 #endif
-		atype x1, x710 = {};
+		atype x1;
 		const vtype cmul = _mm_set1_epi32(1812433253U);
 		const vtype cone = _mm_set1_epi32(1);
 		const vtype c0x7fffffff = _mm_set1_epi32(0x7fffffff);
@@ -309,7 +338,17 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	DO(x.g, x1.g, xM.g) \
 	DO(x.h, x1.h, xM.h)
 
-		{
+		if (flavor == PHP_LEGACY) {
+			vtype c69069 = _mm_set1_epi32(69069);
+			vtype c69069to396 = _mm_set1_epi32(0x4396a0b1);
+
+#define DO(x, x1, xM) \
+	xM = _mm_add_epi32(_mm_add_epi32(xM, xM), cone); \
+	x1 = xM = _mm_mullo_epi32(c69069, xM); \
+	xM = _mm_mullo_epi32(c69069to396, xM);
+			DO_ALL
+#undef DO
+		} else {
 			unsigned int n = (M - 1) / 22;
 			vtype vi = _mm_add_epi32(cone, cone);
 
@@ -333,6 +372,8 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			} while (--n);
 		}
 
+		version = flavor;
+
 		if (!(match->flags & MATCH_SKIP)) {
 #define DO(x, x1, xM) \
 	x = _mm_xor_si128(xM, _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000, \
@@ -353,16 +394,18 @@ static unsigned int crack_range(int32_t start, int32_t end,
 			DO(x710.h, x.h, x1.h)
 #undef DO
 
+			if (version == PHP_521) {
 #define DO(x) \
 	x = _mm_xor_si128(x, c0x9908b0df);
-			DO(x.b)
-			DO(x.d)
-			DO(x.f)
-			DO(x.h)
+				DO(x.b)
+				DO(x.d)
+				DO(x.f)
+				DO(x.h)
 #undef DO
+			} else
+				x = x710;
 		}
 
-		version = PHP_521;
 		do {
 			uint32_t maybe = 1;
 
@@ -375,10 +418,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #define DO_SC(x, s, c) \
 	x = _mm_xor_si128(x, _mm_and_si128(_mm_slli_epi32(x, s), c));
 #define DO(x, x1, xM) \
-	DO_SC(x, 7, c0x9d2c5680)
-				DO_ALL
-#undef DO
-#define DO(x, x1, xM) \
+	DO_SC(x, 7, c0x9d2c5680) \
 	DO_SC(x, 15, c0xefc60000)
 				DO_ALL
 #undef DO
@@ -479,7 +519,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 #endif
 			}
 
-			if (version == PHP_710)
+			if (version != PHP_521)
 				break;
 			version = PHP_710;
 			x = x710;
@@ -505,17 +545,28 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	DO(x.c, x1.c, xM.c) \
 	DO(x.d, x1.d, xM.d)
 
+			if (flavor == PHP_LEGACY) {
 #define DO(x, x1, xM) \
-	x1 = xM = 1812433253U * (xM ^ seed_shr_30) + 1;
-			DO_ALL
-#undef DO
-
-			for (i = 2; i <= M; i++) {
-#define DO(x, x1, xM) \
-	NEXT_STATE(xM, i)
+	xM += xM + 1; \
+	x1 = xM *= 69069; \
+	xM *= 0x4396a0b1;
 				DO_ALL
 #undef DO
+			} else {
+#define DO(x, x1, xM) \
+	x1 = xM = 1812433253U * (xM ^ seed_shr_30) + 1;
+				DO_ALL
+#undef DO
+
+				for (i = 2; i <= M; i++) {
+#define DO(x, x1, xM) \
+	NEXT_STATE(xM, i)
+					DO_ALL
+#undef DO
+				}
 			}
+
+			version = flavor;
 
 			if (!(match->flags & MATCH_SKIP)) {
 #define DO(x, x1, xM) \
@@ -531,32 +582,19 @@ static unsigned int crack_range(int32_t start, int32_t end,
 				DO(x710.d, x.d, x1.d)
 #undef DO
 
-				x.b ^= 0x9908b0df;
-				x.d ^= 0x9908b0df;
+				if (version == PHP_521) {
+					x.b ^= 0x9908b0df;
+					x.d ^= 0x9908b0df;
+				} else
+					x = x710;
 			}
 
-			version = PHP_521;
 			do {
 				if (!(match->flags & MATCH_SKIP)) {
 #define DO(x, x1, xM) \
-	x ^= x >> 11;
-					DO_ALL
-#undef DO
-
-#define DO_SC(x, s, c) \
-	x ^= (x << s) & c;
-#define DO(x, x1, xM) \
-	DO_SC(x, 7, 0x9d2c5680)
-					DO_ALL
-#undef DO
-#define DO(x, x1, xM) \
-	DO_SC(x, 15, 0xefc60000)
-					DO_ALL
-#undef DO
-#undef DO_SC
-#undef DO
-
-#define DO(x, x1, xM) \
+	x ^= x >> 11; \
+	x ^= (x << 7) & 0x9d2c5680; \
+	x ^= (x << 15) & 0xefc60000; \
 	x ^= x >> 18;
 					DO_ALL
 #undef DO
@@ -574,7 +612,7 @@ static unsigned int crack_range(int32_t start, int32_t end,
 				COMPARE(x.c, x1.c, xM.c, seed + 2)
 				COMPARE(x.d, x1.d, xM.d, seed + 3)
 
-				if (version == PHP_710)
+				if (version != PHP_521)
 					break;
 				version = PHP_710;
 				x = x710;
@@ -590,31 +628,49 @@ static unsigned int crack_range(int32_t start, int32_t end,
 
 static unsigned int crack(const match_t *match)
 {
-	unsigned int found = 0;
-	uint32_t base;
+	unsigned int found = 0, recent = 0, shift;
+	uint32_t base, top;
 #if defined(__MIC__) || defined(__AVX512F__)
 	const uint32_t step = 0x10000000 >> P;
 #else
 	const uint32_t step = 0x2000000 >> P;
 #endif
+	version_t flavor;
 	long clk_tck;
 	clock_t start_time;
 	struct tms tms;
 
-	clk_tck = sysconf(_SC_CLK_TCK);
-	start_time = times(&tms);
+	flavor = PHP_LEGACY;
+	shift = 1;
+	do {
+		printf("Version: %s\n", flavors[flavor]);
 
-	for (base = 0; base < (0x40000000 >> (P - 2)); base += step) {
-		uint32_t start = base << P, next = (base + step) << P;
-		clock_t running_time = times(&tms) - start_time;
-		fprintf(stderr,
-		    "\rFound %u, trying %u - %u, speed %llu seeds per second ",
-		    found, start, next - 1,
-		    (unsigned long long)start * clk_tck /
-		    (running_time ? running_time : 1));
+		clk_tck = sysconf(_SC_CLK_TCK);
+		start_time = times(&tms);
 
-		found += crack_range(base, base + step, match);
-	}
+		top = 0x40000000 >> (P - 2 + shift);
+		for (base = 0; base < top; base += step) {
+			uint32_t start = base << (P + shift);
+			uint32_t next = (base + step) << (P + shift);
+			clock_t running_time = times(&tms) - start_time;
+			fprintf(stderr,
+			    "\rFound %u, trying 0x%08x - 0x%08x, "
+			    "speed %.1f Mseeds/s ",
+			    found, start, next - 1,
+			    (double)start * clk_tck /
+			    (running_time ? running_time * 1e6 : 1e6));
+
+			recent = crack_range(base, base + step, match, flavor);
+			found += recent;
+		}
+
+		if (flavor == PHP_MODERN)
+			break;
+		flavor = PHP_MODERN;
+		shift = 0;
+		if (!recent)
+			putchar('\n');
+	} while (1);
 
 	return found;
 }
@@ -707,23 +763,21 @@ static void parse(int argc, char **argv, match_t *match, unsigned int nmatch)
 
 	last->flags |= MATCH_LAST;
 
-	if (match - first > 1) {
-		printf("Pattern:");
-		match = first;
-		do {
-			if (match->flags & MATCH_SKIP)
-				printf(" SKIP");
-			else if (match->flags & MATCH_PURE)
-				printf(" EXACT");
-			else if (match->flags & MATCH_FULL)
-				printf(" RANGE");
-			else if (match->mmin == match->mmax)
-				printf(" EXACT-FROM-%u", match->rspan);
-			else
-				printf(" RANGE-FROM-%u", match->rspan);
-		} while (match++ != last);
-		putchar('\n');
-	}
+	printf("Pattern:");
+	match = first;
+	do {
+		if (match->flags & MATCH_SKIP)
+			printf(" SKIP");
+		else if (match->flags & MATCH_PURE)
+			printf(" EXACT");
+		else if (match->flags & MATCH_FULL)
+			printf(" RANGE");
+		else if (match->mmin == match->mmax)
+			printf(" EXACT-FROM-%u", match->rspan);
+		else
+			printf(" RANGE-FROM-%u", match->rspan);
+	} while (match++ != last);
+	putchar('\n');
 }
 
 int main(int argc, char **argv)
