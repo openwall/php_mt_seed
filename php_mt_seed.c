@@ -292,36 +292,24 @@ static uint64_t crack_range(int32_t start, int32_t end,
 		vtype vseed = _mm_set1_epi32(seed);
 		version_t version;
 
+#define DO(which, add) \
+	xM.which = _mm_add_epi32(xM.a, _mm_set1_epi32(add));
 #if defined(__MIC__) || defined(__AVX512F__)
 		xM.a = _mm512_add_epi32(vseed, _mm512_set_epi32(
 		    0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30));
-		xM.b = _mm512_add_epi32(xM.a, _mm512_set1_epi32(1));
-		xM.c = _mm512_add_epi32(xM.a, _mm512_set1_epi32(32));
-		xM.d = _mm512_add_epi32(xM.a, _mm512_set1_epi32(33));
-		xM.e = _mm512_add_epi32(xM.a, _mm512_set1_epi32(64));
-		xM.f = _mm512_add_epi32(xM.a, _mm512_set1_epi32(65));
-		xM.g = _mm512_add_epi32(xM.a, _mm512_set1_epi32(96));
-		xM.h = _mm512_add_epi32(xM.a, _mm512_set1_epi32(97));
+		DO(b, 1) DO(c, 32) DO(d, 33)
+		DO(e, 64) DO(f, 65) DO(g, 96) DO(h, 97)
 #elif defined(__AVX2__)
 		xM.a = _mm256_add_epi32(vseed, _mm256_set_epi32(
 		    0, 2, 4, 6, 8, 10, 12, 14));
-		xM.b = _mm256_add_epi32(xM.a, _mm256_set1_epi32(1));
-		xM.c = _mm256_add_epi32(xM.a, _mm256_set1_epi32(16));
-		xM.d = _mm256_add_epi32(xM.a, _mm256_set1_epi32(17));
-		xM.e = _mm256_add_epi32(xM.a, _mm256_set1_epi32(32));
-		xM.f = _mm256_add_epi32(xM.a, _mm256_set1_epi32(33));
-		xM.g = _mm256_add_epi32(xM.a, _mm256_set1_epi32(48));
-		xM.h = _mm256_add_epi32(xM.a, _mm256_set1_epi32(49));
+		DO(b, 1) DO(c, 16) DO(d, 17)
+		DO(e, 32) DO(f, 33) DO(g, 48) DO(h, 49)
 #else
 		xM.a = _mm_add_epi32(vseed, _mm_set_epi32(0, 2, 4, 6));
-		xM.b = _mm_add_epi32(vseed, _mm_set_epi32(1, 3, 5, 7));
-		xM.c = _mm_add_epi32(vseed, _mm_set_epi32(8, 10, 12, 14));
-		xM.d = _mm_add_epi32(vseed, _mm_set_epi32(9, 11, 13, 15));
-		xM.e = _mm_add_epi32(vseed, _mm_set_epi32(16, 18, 20, 22));
-		xM.f = _mm_add_epi32(vseed, _mm_set_epi32(17, 19, 21, 23));
-		xM.g = _mm_add_epi32(vseed, _mm_set_epi32(24, 26, 28, 30));
-		xM.h = _mm_add_epi32(vseed, _mm_set_epi32(25, 27, 29, 31));
+		DO(b, 1) DO(c, 8) DO(d, 9)
+		DO(e, 16) DO(f, 17) DO(g, 24) DO(h, 25)
 #endif
+#undef DO
 
 #define DO_ALL \
 	DO(x.a, x1.a, xM.a) \
