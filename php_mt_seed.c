@@ -204,7 +204,7 @@ static inline int diff(uint32_t x, uint32_t x1, uint32_t xs,
 	return -1;
 }
 
-static void print_guess(uint32_t seed, unsigned int *found, version_t version)
+static void print_guess(uint32_t seed, uint64_t *found, version_t version)
 {
 	if (version == PHP_LEGACY)
 		seed <<= 1;
@@ -238,10 +238,10 @@ static void print_guess(uint32_t seed, unsigned int *found, version_t version)
 #define P 5
 #endif
 
-static unsigned int crack_range(int32_t start, int32_t end,
+static uint64_t crack_range(int32_t start, int32_t end,
     const match_t *match, version_t flavor)
 {
-	unsigned int found = 0;
+	uint64_t found = 0;
 	int32_t base; /* signed type for OpenMP 2.5 compatibility */
 #if defined(__SSE4_1__) || defined(__MIC__)
 	vtype vvalue = _mm_set1_epi32(match->mmin);
@@ -626,9 +626,9 @@ static unsigned int crack_range(int32_t start, int32_t end,
 	return found;
 }
 
-static unsigned int crack(const match_t *match)
+static uint64_t crack(const match_t *match)
 {
-	unsigned int found = 0, recent = 0, shift;
+	uint64_t found = 0, recent = 0;
 	uint32_t base, top;
 #if defined(__MIC__) || defined(__AVX512F__)
 	const uint32_t step = 0x10000000 >> P;
@@ -641,8 +641,9 @@ static unsigned int crack(const match_t *match)
 	struct tms tms;
 
 	flavor = PHP_LEGACY;
-	shift = 1;
 	do {
+		unsigned int shift = (flavor == PHP_LEGACY);
+
 		printf("Version: %s\n", flavors[flavor]);
 
 		clk_tck = sysconf(_SC_CLK_TCK);
@@ -654,9 +655,9 @@ static unsigned int crack(const match_t *match)
 			uint32_t next = (base + step) << (P + shift);
 			clock_t running_time = times(&tms) - start_time;
 			fprintf(stderr,
-			    "\rFound %u, trying 0x%08x - 0x%08x, "
+			    "\rFound %llu, trying 0x%08x - 0x%08x, "
 			    "speed %.1f Mseeds/s ",
-			    found, start, next - 1,
+			    (unsigned long long)found, start, next - 1,
 			    (double)start * clk_tck /
 			    (running_time ? running_time * 1e6 : 1e6));
 
@@ -667,7 +668,6 @@ static unsigned int crack(const match_t *match)
 		if (flavor == PHP_MODERN)
 			break;
 		flavor = PHP_MODERN;
-		shift = 0;
 		if (!recent)
 			putchar('\n');
 	} while (1);
@@ -786,7 +786,7 @@ int main(int argc, char **argv)
 
 	parse(argc, argv, match, sizeof(match) / sizeof(match[0]));
 
-	printf("\nFound %u\n", crack(match));
+	printf("\nFound %llu\n", (unsigned long long)crack(match));
 
 	return 0;
 }
