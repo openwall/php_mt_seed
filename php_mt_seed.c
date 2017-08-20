@@ -288,12 +288,7 @@ static uint64_t crack_range(int32_t start, int32_t end,
 		volatile
 #endif
 		atype x1;
-		const vtype cmul = _mm_set1_epi32(1812433253U);
 		const vtype cone = _mm_set1_epi32(1);
-		const vtype c0x7fffffff = _mm_set1_epi32(0x7fffffff);
-		const vtype c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
-		const vtype c0xefc60000 = _mm_set1_epi32(0xefc60000);
-		const vtype c0x9908b0df = _mm_set1_epi32(0x9908b0df);
 		vtype vseed = _mm_set1_epi32(seed);
 		version_t version;
 
@@ -339,8 +334,8 @@ static uint64_t crack_range(int32_t start, int32_t end,
 	DO(x.h, x1.h, xM.h)
 
 		if (flavor == PHP_LEGACY) {
-			vtype c69069 = _mm_set1_epi32(69069);
-			vtype c69069to396 = _mm_set1_epi32(0x4396a0b1);
+			const vtype c69069 = _mm_set1_epi32(69069);
+			const vtype c69069to396 = _mm_set1_epi32(0x4396a0b1);
 
 #define DO(x, x1, xM) \
 	xM = _mm_add_epi32(_mm_add_epi32(xM, xM), cone); \
@@ -349,8 +344,9 @@ static uint64_t crack_range(int32_t start, int32_t end,
 			DO_ALL
 #undef DO
 		} else {
-			unsigned int n = (M - 1) / 22;
+			const vtype cmul = _mm_set1_epi32(1812433253U);
 			vtype vi = _mm_add_epi32(cone, cone);
+			unsigned int n = (M - 1) / 22;
 
 #define DO(x, x1, xM) \
 	x1 = xM = _mm_macc_epi32(cmul, _mm_xor_si128(xM, seed_shr_30), cone);
@@ -375,6 +371,9 @@ static uint64_t crack_range(int32_t start, int32_t end,
 		version = flavor;
 
 		if (!(match->flags & MATCH_SKIP)) {
+			const vtype c0x7fffffff = _mm_set1_epi32(0x7fffffff);
+			const vtype c0x9908b0df = _mm_set1_epi32(0x9908b0df);
+
 #define DO(x, x1, xM) \
 	x = _mm_xor_si128(xM, _mm_srli_epi32(_mm_or_si128(seed_and_0x80000000, \
 	    _mm_and_si128(x1, c0x7fffffff)), 1));
@@ -410,6 +409,9 @@ static uint64_t crack_range(int32_t start, int32_t end,
 			uint32_t maybe = 1;
 
 			if (!(match->flags & MATCH_SKIP)) {
+				const vtype c0x9d2c5680 = _mm_set1_epi32(0x9d2c5680);
+				const vtype c0xefc60000 = _mm_set1_epi32(0xefc60000);
+
 #define DO(x, x1, xM) \
 	x = _mm_xor_si128(x, _mm_srli_epi32(x, 11));
 				DO_ALL
