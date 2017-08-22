@@ -390,13 +390,13 @@ up to 10 digits rather than numbers that fit in 31 bits and do not start
 with a 0 (except for the number 0).  This can be partially corrected by
 splitting the invocation in two:
 
-    $ time ./john --format=raw-md5 --incremental=digits --max-length=9 --fork=32 hashfile 2>/dev/null 
+    $ time ./john --format=raw-md5 --incremental=digits --max-length=9 --fork=32 hashfile 2>/dev/null
     Loaded 1 password hash (Raw-MD5 [MD5 128/128 AVX 4x3])
     
     real    0m4.540s
     user    0m43.320s
     sys     0m1.762s
-    $ time ./john --format=raw-md5 --mask='[12]?d?d?d?d?d?d?d?d?d' --fork=32 hashfile 2>/dev/null 
+    $ time ./john --format=raw-md5 --mask='[12]?d?d?d?d?d?d?d?d?d' --fork=32 hashfile 2>/dev/null
     Loaded 1 password hash (Raw-MD5 [MD5 128/128 AVX 4x3])
     1871584565       (?)
     
@@ -434,10 +434,10 @@ invoke php_mt_seed with dummy command-line arguments, but not exactly
 arbitrary ones: e.g., "0 1" is non-trivial enough for php_mt_seed to
 always call diff() and thus let our added code take over the comparison.
 
-(Cracking seeds from old MediaWiki tokens as above is readily supported
+Cracking seeds from old MediaWiki tokens as above is readily supported
 as an example exploit in Snowflake, an alternative to php_mt_seed.
 However, in general either php_mt_seed or Snowflake would need custom
-code written for new cases like this.)
+code written for new cases like this.
 
 
 	Xeon Phi specifics.
