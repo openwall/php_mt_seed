@@ -447,6 +447,14 @@ seeds for PHP 7.1.0+ for mt_rand() called with a range specified, you
 can specify at most a range one smaller than that, thus "0 2147483646"
 being the maximum that php_mt_seed supports for those versions.
 
+PHP 7.1.0 also introduced MT_RAND_PHP as optional second parameter to
+mt_srand().  When specified, it correctly enables behavior identical to
+that of PHP versions 5.2.1 to 7.0.x.  Thus, seeds that php_mt_seed
+reports as valid for 5.2.1 to 7.0.x are always also valid for 7.1.0+
+with MT_RAND_PHP, and conversely seeds that php_mt_seed reports as valid
+for 7.1.0+ are often invalid for 7.1.0+ with MT_RAND_PHP (except when
+the same seeds are also valid for 5.2.1 to 7.0.x, which is common).
+
 
 	Contact info.
 
