@@ -147,11 +147,38 @@ When invoked with 5 or more numbers, each group of 4 and then the last
 group of 1, 2, or (usually) 4 are processed as above, where each group
 refers to a corresponding mt_rand() output.
 
+Although the syntax above technically requires specification of ranges
+when matching multiple mt_rand() outputs, it is also possible to match
+exact outputs and/or outputs from mt_rand() without a range specified by
+listing the value to match twice (same minimum and maximum) and/or by
+listing the range "passed into" mt_rand() as "0 2147483647".  The latter
+is assumed to be equivalent to mt_rand() called without a range.  For
+example, this matches first mt_rand() output of 1328851649 followed by
+second mt_rand() output of 1423851145:
+
+    $ time ./php_mt_seed 1328851649 1328851649 0 2147483647  1423851145
+    Pattern: EXACT EXACT
+    Version: 3.0.7 to 5.2.0
+    Found 0, trying 0xfc000000 - 0xffffffff, speed 15658.7 Mseeds/s 
+    Version: 5.2.1+
+    Found 0, trying 0x48000000 - 0x49ffffff, speed 91.9 Mseeds/s 
+    seed = 0x499602d2 = 1234567890 (PHP 5.2.1 to 7.0.x; HHVM)
+    Found 1, trying 0xfe000000 - 0xffffffff, speed 91.9 Mseeds/s 
+    Found 1
+    
+    real    0m47.035s
+    user    6m15.273s
+    sys     0m0.004s
+
+This is on the same machine as above.  The additional constraint (on the
+second mt_rand() output) caused no slowdown, but removed extra seeds
+from the output.
+
 It is possible to have php_mt_seed skip (ignore) some mt_rand() outputs
 by listing for them 4 numbers that would match any output value.  By
 convention, this is typically done by listing "0 0 0 0", which literally
 means "the output must be from 0 to 0 as returned by mt_rand(0, 0)", a
-condition that is always true.
+condition that is always true.  This is illustrated further below.
 
 
 	Complex usage example.
@@ -293,6 +320,125 @@ instance (so that it'd be restarted) via one of many non-security bugs
 or resource exhaustion in PHP (but first make sure you're authorized to
 do things like that).
 
+The above attack might not have worked against old versions of Drupal
+as-is.  There could be reseeding and/or other uses of mt_rand() getting
+in the way.  It is just an illustration of how to approach applying
+mt_rand() seed cracking in a real-world'ish scenario.
+
+
+	When extra tools or php_mt_seed changes are needed.
+
+Sometimes applications post-process mt_rand() outputs in ways very
+different from what was illustrated above.  It isn't always practical to
+write and use tiny scripts like we did above to reverse those tokens,
+generated passwords, etc. to mt_rand() output constraints that can be
+passed to php_mt_seed.
+
+In simpler ones of those other cases, a pre-existing extra tool can be
+used.  For example, if a PHP application exposes md5(mt_rand()) as a
+token, then a password hash cracker such as John the Ripper -jumbo or
+Hashcat can be used to crack the MD5 hash, retrieving the mt_rand()
+output value that can be passed to php_mt_seed.  For example:
+
+    $ php -r 'echo md5(mt_rand()), "\n";' | tee hashfile
+    a67d0e9f38d578eefb1720d611211a26
+    $ time ./john --format=raw-md5 --incremental=digits --max-length=10 --fork=32 hashfile 2>/dev/null
+    Loaded 1 password hash (Raw-MD5 [MD5 128/128 AVX 4x3])
+    1871584565       (?)
+    
+    real    0m40.922s
+    user    6m41.117s
+    sys     0m1.739s
+    $ time ./php_mt_seed 1871584565
+    Pattern: EXACT
+    Version: 3.0.7 to 5.2.0
+    Found 0, trying 0x48000000 - 0x4bffffff, speed 24159.2 Mseeds/s 
+    seed = 0x4be01ac0 = 1272978112 (PHP 3.0.7 to 5.2.0)
+    seed = 0x4be01ac1 = 1272978113 (PHP 3.0.7 to 5.2.0)
+    Found 2, trying 0x5c000000 - 0x5fffffff, speed 25725.1 Mseeds/s 
+    seed = 0x5fe49e4e = 1608818254 (PHP 3.0.7 to 5.2.0)
+    seed = 0x5fe49e4f = 1608818255 (PHP 3.0.7 to 5.2.0)
+    Found 4, trying 0xfc000000 - 0xffffffff, speed 28185.7 Mseeds/s 
+    Version: 5.2.1+
+    Found 4, trying 0x86000000 - 0x87ffffff, speed 234.4 Mseeds/s 
+    seed = 0x86d2e002 = 2261966850 (PHP 7.1.0+)
+    Found 5, trying 0xc2000000 - 0xc3ffffff, speed 234.5 Mseeds/s 
+    seed = 0xc24768d7 = 3259459799 (PHP 5.2.1 to 7.0.x; HHVM)
+    seed = 0xc24768d7 = 3259459799 (PHP 7.1.0+)
+    Found 7, trying 0xc6000000 - 0xc7ffffff, speed 234.4 Mseeds/s 
+    seed = 0xc6d8b812 = 3336091666 (PHP 5.2.1 to 7.0.x; HHVM)
+    seed = 0xc6d8b812 = 3336091666 (PHP 7.1.0+)
+    Found 9, trying 0xfe000000 - 0xffffffff, speed 234.5 Mseeds/s 
+    Found 9
+    
+    real    0m18.478s
+    user    9m48.751s
+    sys     0m0.015s
+    $ php -r 'mt_srand(3259459799); echo md5(mt_rand()), "\n";'
+    a67d0e9f38d578eefb1720d611211a26
+    $ php -r 'mt_srand(3336091666); echo md5(mt_rand()), "\n";'
+    a67d0e9f38d578eefb1720d611211a26
+
+We found two seeds that generate our observed md5(mt_rand()) token (and
+some more that would do it with other versions of PHP).  While both are
+correct given what we knew (assuming that we know the PHP version), in a
+real-world scenario only one of those would likely allow us to correctly
+infer prior and predict further mt_rand() outputs.  That's good enough.
+
+The invocation of JtR is sub-optimal in that it'd search all strings of
+up to 10 digits rather than numbers that fit in 31 bits and do not start
+with a 0 (except for the number 0).  This can be partially corrected by
+splitting the invocation in two:
+
+    $ time ./john --format=raw-md5 --incremental=digits --max-length=9 --fork=32 hashfile 2>/dev/null 
+    Loaded 1 password hash (Raw-MD5 [MD5 128/128 AVX 4x3])
+    
+    real    0m4.540s
+    user    0m43.320s
+    sys     0m1.762s
+    $ time ./john --format=raw-md5 --mask='[12]?d?d?d?d?d?d?d?d?d' --fork=32 hashfile 2>/dev/null 
+    Loaded 1 password hash (Raw-MD5 [MD5 128/128 AVX 4x3])
+    1871584565       (?)
+    
+    real    0m4.092s
+    user    1m58.155s
+    sys     0m1.609s
+
+As a slightly trickier example, old eZ Publish used:
+
+    $time   = time();
+    $userID = $user->id();
+    $hashKey = md5( $userID . ':' . $time . ':' . mt_rand() );
+
+yet this can be cracked similarly, by obtaining the timestamp from the
+server itself (such as from the HTTP headers) or assuming synchronized
+time and by knowing or cracking the target user ID as well.  The known
+portions of the information may be specified in a JtR or Hashcat mask
+as-is (e.g., as --mask='100:1503415769:[12]?d?d?d?d?d?d?d?d?d' in the
+second invocation of JtR above) and then mt_rand() output extracted from
+the cracked "password" and passed into php_mt_seed.
+
+As a harder to handle example, old MediaWiki used:
+
+    function generateToken( $salt = '' ) {
+    	$token = dechex( mt_rand() ) . dechex( mt_rand() );
+    	return md5( $token . $salt );
+    }
+
+Two mt_rand() outputs at once are unlikely to be quickly cracked by a
+program not aware of mt_rand() specifics.  This is a case where we'd
+need to modify php_mt_seed internals - specifically, introduce recording
+of two mt_rand() outputs in php_mt_seed's diff() function and have it
+compute MD5 and compare the result against our token value.  Then we'd
+invoke php_mt_seed with dummy command-line arguments, but not exactly
+arbitrary ones: e.g., "0 1" is non-trivial enough for php_mt_seed to
+always call diff() and thus let our added code take over the comparison.
+
+(Cracking seeds from old MediaWiki tokens as above is readily supported
+as an example exploit in Snowflake, an alternative to php_mt_seed.
+However, in general either php_mt_seed or Snowflake would need custom
+code written for new cases like this.)
+
 
 	Xeon Phi specifics.
 
@@ -346,7 +492,7 @@ host CPU rather than a coprocessor).  Also, the performance impact of
 the non-vectorized portions of code is lower than on first generation.
 
 
-	PHP version curiosities (which shouldn't matter to you).
+	PHP version curiosities (mostly unimportant).
 
 While php_mt_seed supports 3 major revisions of PHP's mt_rand()
 algorithm and that sort of covers PHP 3.0.7 through 7.1.0+ (up to the
@@ -445,7 +591,17 @@ without a range, and php_mt_seed still assumes so.  This assumption is
 no longer valid for PHP 7.1.0+, which means that when searching for
 seeds for PHP 7.1.0+ for mt_rand() called with a range specified, you
 can specify at most a range one smaller than that, thus "0 2147483646"
-being the maximum that php_mt_seed supports for those versions.
+being the maximum that php_mt_seed supports for those versions.  This
+minor limitation shouldn't matter in practice, except that you might
+need to be aware you can continue to specify a range of "0 2147483647"
+to indicate that no range was passed into mt_rand().
+
+PHP 7.1.0 also aliased rand() to mt_rand() and srand() to mt_srand().
+This means that on one hand you can use php_mt_seed to crack rand()
+seeds for PHP 7.1.0+ (since those are also mt_rand() seeds), but on the
+other hand this cross-seeding and cross-consumption of random numbers
+can affect which attacks work or don't work, and exactly how, against
+specific applications that make use of both sets of PHP functions.
 
 PHP 7.1.0 also introduced MT_RAND_PHP as optional second parameter to
 mt_srand().  When specified, it correctly enables behavior identical to
